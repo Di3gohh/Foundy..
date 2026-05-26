@@ -1,0 +1,19 @@
+{
+  "name": "Foundy",
+  "short_name": "Foundy",
+  "description": "Encontre e devolva itens perdidos na sua comunidade.",
+  "lang": "pt-BR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#09111f",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
