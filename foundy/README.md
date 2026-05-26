@@ -63,8 +63,19 @@ npm run dev
 Banco:
 
 ```bash
-psql "$DATABASE_URL" -f supabase/schema.sql
+psql "$DATABASE_URL" -f supabase/foundy_cloud_schema.sql
 ```
+
+Para Supabase Cloud, o caminho mais simples é abrir o SQL Editor e executar o conteúdo de
+`supabase/foundy_cloud_schema.sql`.
+
+## Deploy
+
+- Frontend: Vercel com root directory `apps/web`.
+- Backend: Render com o blueprint `render.yaml`.
+- Banco: Supabase Cloud com PostGIS habilitado pelo SQL do projeto.
+- Variável pública do frontend: apenas `NEXT_PUBLIC_API_URL`.
+- Variáveis privadas do backend: `SUPABASE_URL`, `SUPABASE_KEY`, `JWT_SECRET_KEY` e `CORS_ORIGINS`.
 
 ## Decisões de segurança
 

@@ -62,7 +62,7 @@ export function MainScreen() {
             <div className="filters" aria-label="Filtros">
               {filters.map((filter) => (
                 <button
-                  className={`filterChip ${activeFilter === filter.value ? 'filterChipActive' : ''}`}
+                  className={`filterChip ${activeFilter === filter.value ?'filterChipActive' : ''}`}
                   key={filter.value}
                   type="button"
                   onClick={() => setActiveFilter(filter.value)}
@@ -74,7 +74,7 @@ export function MainScreen() {
 
             <div className="itemActions">
               <button
-                className={`ghostButton ${nearMe ? 'filterChipActive' : ''}`}
+                className={`ghostButton ${nearMe ?'filterChipActive' : ''}`}
                 type="button"
                 onClick={() => setNearMe((value) => !value)}
               >
@@ -90,7 +90,7 @@ export function MainScreen() {
         </div>
       </section>
 
-      {composerOpen ? <ItemComposer onClose={() => setComposerOpen(false)} /> : null}
+      {composerOpen ?<ItemComposer onClose={() => setComposerOpen(false)} /> : null}
     </main>
   )
 }

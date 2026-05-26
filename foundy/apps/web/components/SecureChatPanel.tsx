@@ -7,7 +7,7 @@ export function SecureChatPanel({ extortionFlagged }: { extortionFlagged: boolea
     <section className="itemCard" aria-label="Conversa segura">
       <div className="itemCardHeader">
         <h2 className="itemTitle">Conversa</h2>
-        {extortionFlagged ? <span className="badge">Em revisão</span> : null}
+        {extortionFlagged ?<span className="badge">Em revisão</span> : null}
       </div>
 
       <div className="field">
@@ -19,7 +19,7 @@ export function SecureChatPanel({ extortionFlagged }: { extortionFlagged: boolea
         <button className="primaryButton" type="button">
           <Send size={16} aria-hidden="true" /> Enviar
         </button>
-        {extortionFlagged ? (
+        {extortionFlagged ?(
           <button className="dangerButton" type="button">
             <Flag size={16} aria-hidden="true" /> Denunciar Extorsão
           </button>

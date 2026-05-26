@@ -15,7 +15,7 @@ const categoryLabels: Record<FoundyItem['category'], string> = {
 export function FeedList({ items, nearMe }: { items: FoundyItem[]; nearMe: boolean }) {
   return (
     <div className="itemList" aria-live="polite">
-      {nearMe ? <p className="itemMeta">Mostrando itens próximos ao seu local.</p> : null}
+      {nearMe ?<p className="itemMeta">Mostrando itens próximos ao seu local.</p> : null}
 
       {items.map((item) => (
         <article className="itemCard" key={item.id}>
@@ -26,7 +26,7 @@ export function FeedList({ items, nearMe }: { items: FoundyItem[]; nearMe: boole
                 {categoryLabels[item.category]} · {item.locationLabel}
               </p>
             </div>
-            {item.isPremium ? <span className="badge">Impulsionado</span> : null}
+            {item.isPremium ?<span className="badge">Impulsionado</span> : null}
           </div>
 
           <p className="itemDescription">{item.description}</p>

@@ -18,7 +18,7 @@ export default function LeafletMap({ items }: { items: FoundyItem[] }) {
         <Circle
           center={[item.latitude, item.longitude]}
           key={item.id}
-          pathOptions={{ color: item.isPremium ? '#f59e0b' : '#0f766e', fillOpacity: 0.18 }}
+          pathOptions={{ color: item.isPremium ?'#f59e0b' : '#0f766e', fillOpacity: 0.18 }}
           radius={item.locationRadiusMeters}
         >
           <Popup>
