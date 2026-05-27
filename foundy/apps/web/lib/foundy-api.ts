@@ -210,11 +210,7 @@ export async function denunciarExtorsao(salaChatId: string, usuarioId: string, m
     await parseError(response, 'Não foi possível enviar a denúncia de extorsão.')
   }
 
-  return (await response.json()) as {
-    mensagem: string
-    email_verificado?: boolean
-    login_liberado?: boolean
-  }
+  return (await response.json()) as { mensagem: string }
 }
 
 export async function criarAlertaPerdido(payload: {
@@ -272,7 +268,11 @@ export async function cadastrarUsuario(payload: { nome: string; email: string; s
     await parseError(response, 'Não foi possível criar a conta.')
   }
 
-  return (await response.json()) as { mensagem: string }
+  return (await response.json()) as {
+    mensagem: string
+    email_verificado?: boolean
+    login_liberado?: boolean
+  }
 }
 
 export async function entrarUsuario(payload: { email: string; senha: string }) {
