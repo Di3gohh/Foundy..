@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     smtp_port: int = Field(default=587, alias="SMTP_PORT")
     smtp_user: str | None = Field(default=None, alias="SMTP_USER")
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
-    smtp_from_email: str = Field(default="nao-responda@foundy.app", alias="SMTP_FROM_EMAIL")
-    support_email: str = Field(default="Foundy.company@gmail.com", alias="SUPPORT_EMAIL")
+    smtp_from_email: str = Field(default="foundy.company@gmail.com", alias="SMTP_FROM_EMAIL")
+    support_email: str = Field(default="foundy.company@gmail.com", alias="SUPPORT_EMAIL")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
