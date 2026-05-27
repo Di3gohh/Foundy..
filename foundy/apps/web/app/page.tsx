@@ -49,7 +49,7 @@ const MapaPerimetro = dynamic(() => import('@/components/MapaPerimetro'), {
   ssr: false,
   loading: () => (
     <div className="grid min-h-[260px] place-items-center rounded-2xl border border-white/10 bg-slate-900 text-sm text-slate-300">
-      Carregando mapa do perÃ­metro...
+      Carregando mapa do perímetro...
     </div>
   ),
 })
@@ -72,9 +72,9 @@ const itensDemonstracao: ItemAchado[] = [
   {
     id: 'demo-1',
     titulo: 'Chave Yale com chaveiro azul',
-    descricao: 'Encontrada perto da saÃ­da principal da estaÃ§Ã£o. O endereÃ§o exato foi mascarado por seguranÃ§a.',
+    descricao: 'Encontrada perto da saída principal da estação. O endereço exato foi mascarado por segurança.',
     categoria: 'chaves',
-    local_descricao: 'RegiÃ£o da estaÃ§Ã£o central',
+    local_descricao: 'Região da estação central',
     latitude_aproximada: -23.5489,
     longitude_aproximada: -46.6372,
     raio_mascara_metros: 500,
@@ -82,7 +82,7 @@ const itensDemonstracao: ItemAchado[] = [
     imagem_url: placeholdersPorCategoria.chaves,
     status: 'publicado',
     criado_em: new Date().toISOString(),
-    desafio_pergunta: 'Qual detalhe sÃ³ o dono saberia informar?',
+    desafio_pergunta: 'Qual detalhe só o dono saberia informar?',
     chat_desbloqueado: false,
     tags_ia: ['chaveyale', 'fitaazul'],
     hashtags_ia: ['#ChaveYale', '#FitaAzul'],
@@ -94,7 +94,7 @@ const itensDemonstracao: ItemAchado[] = [
     titulo: 'Carteira preta com documento parcial',
     descricao: 'Encontrada em cafeteria local. Dados pessoais foram automaticamente ocultados.',
     categoria: 'documentos',
-    local_descricao: 'PrÃ³ximo Ã  praÃ§a principal',
+    local_descricao: 'Próximo à praça principal',
     latitude_aproximada: -23.5533,
     longitude_aproximada: -46.6312,
     raio_mascara_metros: 500,
@@ -109,10 +109,10 @@ const itensDemonstracao: ItemAchado[] = [
   },
   {
     id: 'demo-3',
-    titulo: 'Fone bluetooth no banco pÃºblico',
-    descricao: 'Estojo branco encontrado na Ã¡rea comercial. A prova de posse Ã© exigida antes de liberar o chat.',
+    titulo: 'Fone bluetooth no banco público',
+    descricao: 'Estojo branco encontrado na área comercial. A prova de posse é exigida antes de liberar o chat.',
     categoria: 'eletronicos',
-    local_descricao: 'Ãrea comercial do bairro',
+    local_descricao: 'Área comercial do bairro',
     latitude_aproximada: -23.5561,
     longitude_aproximada: -46.642,
     raio_mascara_metros: 500,
@@ -120,7 +120,7 @@ const itensDemonstracao: ItemAchado[] = [
     imagem_url: placeholdersPorCategoria.eletronicos,
     status: 'publicado',
     criado_em: new Date().toISOString(),
-    desafio_pergunta: 'Qual marca estÃ¡ gravada no estojo?',
+    desafio_pergunta: 'Qual marca está gravada no estojo?',
     chat_desbloqueado: false,
     tags_ia: ['celular'],
     hashtags_ia: ['#Celular'],
@@ -128,11 +128,11 @@ const itensDemonstracao: ItemAchado[] = [
 ]
 
 const categorias: Record<CategoriaItem, { label: string; icon: string }> = {
-  chaves: { label: 'Chaves', icon: 'ðŸ”‘' },
-  eletronicos: { label: 'Celulares', icon: 'ðŸ“±' },
-  documentos: { label: 'Documentos', icon: 'ðŸ‘›' },
-  vestuario: { label: 'VestuÃ¡rio', icon: 'ðŸ§¥' },
-  outros: { label: 'Pets e outros', icon: 'ðŸ¶' },
+  chaves: { label: 'Chaves', icon: '🔑' },
+  eletronicos: { label: 'Celulares', icon: '📱' },
+  documentos: { label: 'Documentos', icon: '👛' },
+  vestuario: { label: 'Vestuário', icon: '🧥' },
+  outros: { label: 'Pets e outros', icon: '🐶' },
 }
 
 function haversineDistanceMeters(from: GeoPoint, to: GeoPoint) {
@@ -148,7 +148,7 @@ function haversineDistanceMeters(from: GeoPoint, to: GeoPoint) {
 }
 
 function formatDistance(meters: number | null) {
-  if (meters === null || Number.isNaN(meters)) return 'DistÃ¢ncia protegida'
+  if (meters === null || Number.isNaN(meters)) return 'Distância protegida'
   if (meters < 1000) return `${Math.round(meters)} m`
   return `${(meters / 1000).toFixed(1).replace('.', ',')} km`
 }
@@ -198,13 +198,13 @@ export default function Home() {
   const carregarItens = useCallback(
     async (latitude?: number, longitude?: number) => {
       setCarregando(true)
-      setMensagemSistema('Atualizando itens com privacidade geogrÃ¡fica ativa...')
+      setMensagemSistema('Atualizando itens com privacidade geográfica ativa...')
       try {
         const dados = await buscarItensAchadosProximos({ latitude, longitude })
         const lista = dados
         setItens(lista)
         setItemSelecionado(lista[0] ?? null)
-        setMensagemSistema(dados.length > 0 ? 'Radar atualizado com sucesso.' : 'Sem novos itens na sua regiÃ£o por enquanto.')
+        setMensagemSistema(dados.length > 0 ? 'Radar atualizado com sucesso.' : 'Sem novos itens na sua região por enquanto.')
       } catch (error) {
         setItens([])
         setItemSelecionado(null)
@@ -222,11 +222,11 @@ export default function Home() {
 
   const obterMeuLocal = useCallback(() => {
     if (!navigator.geolocation) {
-      setMensagemSistema('Este navegador nÃ£o suporta geolocalizaÃ§Ã£o.')
+      setMensagemSistema('Este navegador não suporta geolocalização.')
       return
     }
 
-    setMensagemSistema('Solicitando sua posiÃ§Ã£o para calcular distÃ¢ncias exatas...')
+    setMensagemSistema('Solicitando sua posição para calcular distâncias exatas...')
     navigator.geolocation.getCurrentPosition(
       (posicao) => {
         const ponto = { latitude: posicao.coords.latitude, longitude: posicao.coords.longitude }
@@ -234,7 +234,7 @@ export default function Home() {
         void carregarItens(ponto.latitude, ponto.longitude)
       },
       () => {
-        setMensagemSistema('NÃ£o foi possÃ­vel acessar sua localizaÃ§Ã£o. Mantivemos a busca regional padrÃ£o.')
+        setMensagemSistema('Não foi possível acessar sua localização. Mantivemos a busca regional padrão.')
       },
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
     )
@@ -253,7 +253,7 @@ export default function Home() {
         setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
       })
       .catch((error) => {
-        setMensagemSistema(error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel carregar o chat seguro.')
+        setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível carregar o chat seguro.')
       })
       .finally(() => setChatCarregando(false))
   }, [modalAtivo, salaChatId, sessao])
@@ -270,7 +270,7 @@ export default function Home() {
 
   function iniciarFluxoReivindicacao(item: ItemAchado) {
     if (!sessao) {
-      setMensagemSistema('VocÃª pode navegar livremente, mas para reivindicar um item Ã© preciso login com e-mail verificado.')
+      setMensagemSistema('Você pode navegar livremente, mas para reivindicar um item é preciso login com e-mail verificado.')
       setModalAtivo('auth')
       return
     }
@@ -286,7 +286,7 @@ export default function Home() {
       return
     }
     if (respostaDesafio.trim().length < 2) {
-      setMensagemSistema('Digite uma resposta vÃ¡lida para o desafio do dono.')
+      setMensagemSistema('Digite uma resposta válida para o desafio do dono.')
       return
     }
 
@@ -296,13 +296,13 @@ export default function Home() {
       setMensagemSistema(resultado.mensagem)
       setModalAtivo('aguardando')
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel enviar a resposta.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a resposta.')
     }
   }
 
   async function validarRespostaComoEncontrador(aprovada: boolean) {
     if (!sessao || !reivindicacaoId) {
-      setMensagemSistema('ReivindicaÃ§Ã£o invÃ¡lida para validaÃ§Ã£o.')
+      setMensagemSistema('Reivindicação inválida para validação.')
       return
     }
 
@@ -319,7 +319,7 @@ export default function Home() {
         setModalAtivo(null)
       }
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel validar a resposta.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível validar a resposta.')
     }
   }
 
@@ -333,7 +333,7 @@ export default function Home() {
         setDenunciaDisponivel(true)
       }
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel enviar a mensagem.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a mensagem.')
     }
   }
 
@@ -343,11 +343,11 @@ export default function Home() {
       const resposta = await denunciarExtorsao(
         salaChatId,
         sessao.usuario_id,
-        'SolicitaÃ§Ã£o indevida de pagamento para devoluÃ§Ã£o do item.',
+        'Solicitação indevida de pagamento para devolução do item.',
       )
       setMensagemSistema(resposta.mensagem)
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel enviar a denÃºncia.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a denúncia.')
     }
   }
 
@@ -361,7 +361,7 @@ export default function Home() {
             </span>
             <span>
               <span className="block text-base font-black tracking-wide">FOUNDY.</span>
-              <span className="hidden text-xs text-foundy-muted sm:block">Limpo, Seguro e RÃ¡pido</span>
+              <span className="hidden text-xs text-foundy-muted sm:block">Limpo, Seguro e Rápido</span>
             </span>
           </button>
 
@@ -371,13 +371,13 @@ export default function Home() {
               type="button"
               onClick={() => setModalAtivo('auth')}
             >
-              {sessao ? `OlÃ¡, ${sessao.nome}` : 'Entrar'}
+              {sessao ? `Olá, ${sessao.nome}` : 'Entrar'}
             </button>
             <button
               className="grid size-10 place-items-center rounded-xl border border-foundy-border text-foundy-foreground transition hover:border-foundy-blue/60"
               type="button"
-              aria-label="NotificaÃ§Ãµes"
-              onClick={() => setMensagemSistema('As notificaÃ§Ãµes de perÃ­metro ativo aparecerÃ£o aqui em tempo real.')}
+              aria-label="Notificações"
+              onClick={() => setMensagemSistema('As notificações de perímetro ativo aparecerão aqui em tempo real.')}
             >
               <Bell size={18} aria-hidden="true" />
             </button>
@@ -390,7 +390,7 @@ export default function Home() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-foundy-blue">O Radar hiperlocal</p>
-              <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">Mapa com Ã¡rea aproximada e recuperaÃ§Ã£o segura</h1>
+              <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">Mapa com área aproximada e recuperação segura</h1>
             </div>
             <button
               className="inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60"
@@ -408,7 +408,7 @@ export default function Home() {
                 <Search size={16} aria-hidden="true" className="text-foundy-muted" />
                 <input
                   className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-foundy-muted"
-                  placeholder="Buscar por tÃ­tulo, descriÃ§Ã£o ou hashtag..."
+                  placeholder="Buscar por título, descrição ou hashtag..."
                   value={buscaTexto}
                   onChange={(event) => setBuscaTexto(event.target.value)}
                 />
@@ -449,14 +449,14 @@ export default function Home() {
           <div className="mt-4 rounded-2xl border border-foundy-border bg-foundy-background/70 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-bold">Escudo de privacidade geogrÃ¡fica ativo</p>
+                <p className="text-sm font-bold">Escudo de privacidade geográfica ativo</p>
                 <p className="mt-1 text-sm text-foundy-muted">
-                  O mapa revela somente raio aproximado. Telefone, e-mail e endereÃ§o exato ficam protegidos.
+                  O mapa revela somente raio aproximado. Telefone, e-mail e endereço exato ficam protegidos.
                 </p>
               </div>
               <span className="inline-flex items-center gap-2 rounded-full bg-foundy-green/20 px-3 py-2 text-xs font-bold text-foundy-green">
                 <ShieldCheck size={15} aria-hidden="true" />
-                SeguranÃ§a aplicada
+                Segurança aplicada
               </span>
             </div>
           </div>
@@ -465,7 +465,7 @@ export default function Home() {
         <section className="grid gap-4" aria-label="Feed de itens achados">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-xl font-black tracking-tight">Itens achados perto de vocÃª</h2>
+              <h2 className="text-xl font-black tracking-tight">Itens achados perto de você</h2>
               <p className="text-sm text-foundy-muted" aria-live="polite">
                 {mensagemSistema}
               </p>
@@ -526,7 +526,7 @@ export default function Home() {
                     type="button"
                     onClick={() => iniciarFluxoReivindicacao(item)}
                   >
-                    Ã‰ meu
+                    É meu
                   </button>
                   <button
                     className="rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold text-foundy-foreground"
@@ -556,7 +556,7 @@ export default function Home() {
       <button
         className="fixed bottom-6 left-1/2 z-40 grid size-16 -translate-x-1/2 place-items-center rounded-full bg-foundy-blue text-white shadow-2xl shadow-foundy-blue/35 transition hover:scale-105"
         type="button"
-        aria-label="Abrir aÃ§Ãµes rÃ¡pidas"
+        aria-label="Abrir ações rápidas"
         onClick={abrirAcaoRapida}
       >
         <Plus size={28} aria-hidden="true" />
@@ -578,7 +578,7 @@ export default function Home() {
           onClose={() => setModalAtivo(null)}
           onEscolherAchei={() => {
             if (!sessao) {
-              setMensagemSistema('Para publicar item achado Ã© necessÃ¡rio login com e-mail verificado.')
+              setMensagemSistema('Para publicar item achado é necessário login com e-mail verificado.')
               setModalAtivo('auth')
               return
             }
@@ -586,7 +586,7 @@ export default function Home() {
           }}
           onEscolherPerdi={() => {
             if (!sessao) {
-              setMensagemSistema('Para criar perÃ­metro de perda Ã© necessÃ¡rio login com e-mail verificado.')
+              setMensagemSistema('Para criar perímetro de perda é necessário login com e-mail verificado.')
               setModalAtivo('auth')
               return
             }
@@ -602,7 +602,7 @@ export default function Home() {
           onPublicado={(item) => {
             setItens((atuais) => [item, ...atuais])
             setItemSelecionado(item)
-            setMensagemSistema('Item publicado com seguranÃ§a. O desafio oculto foi salvo.')
+            setMensagemSistema('Item publicado com segurança. O desafio oculto foi salvo.')
             setModalAtivo(null)
           }}
         />
@@ -718,11 +718,11 @@ function ModalAutenticacao({
         setMensagem(resposta.mensagem)
       } else {
         const resposta = await entrarUsuario({ email, senha })
-        setMensagem(`SessÃ£o iniciada. Badge atual: ${resposta.badge_publica}.`)
+        setMensagem(`Sessão iniciada. Badge atual: ${resposta.badge_publica}.`)
         onSessaoAtiva(resposta)
       }
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel concluir a autenticaÃ§Ã£o.')
+      setMensagem(error instanceof Error ? error.message : 'Não foi possível concluir a autenticação.')
     } finally {
       setEnviando(false)
     }
@@ -790,7 +790,7 @@ function ModalAutenticacao({
           disabled={enviando}
           onClick={() => void enviar()}
         >
-          {enviando ? 'Enviando...' : modo === 'entrar' ? 'Entrar com e-mail verificado' : 'Criar conta e receber verificaÃ§Ã£o'}
+          {enviando ? 'Enviando...' : modo === 'entrar' ? 'Entrar com e-mail verificado' : 'Criar conta e receber verificação'}
         </button>
       </div>
     </ModalBase>
@@ -807,7 +807,7 @@ function ModalAcaoRapida({
   onEscolherAchei: () => void
 }) {
   return (
-    <ModalBase titulo="Nova aÃ§Ã£o rÃ¡pida" subtitulo="Selecione o fluxo ideal para seu caso." onClose={onClose}>
+    <ModalBase titulo="Nova ação rápida" subtitulo="Selecione o fluxo ideal para seu caso." onClose={onClose}>
       <div className="grid gap-3 p-4">
         <button
           className="inline-flex h-14 items-center justify-between rounded-2xl bg-red-500 px-4 text-left text-white"
@@ -816,7 +816,7 @@ function ModalAcaoRapida({
         >
           <span>
             <strong className="block">Perdi algo</strong>
-            <span className="text-sm opacity-90">Criar perÃ­metro ativo de busca</span>
+            <span className="text-sm opacity-90">Criar perímetro ativo de busca</span>
           </span>
           <MapPin size={18} aria-hidden="true" />
         </button>
@@ -857,26 +857,26 @@ function ModalItemAchado({
   const [processandoImagem, setProcessandoImagem] = useState(false)
   const [tagsImagem, setTagsImagem] = useState<string[]>([])
   const [textoPadronizado, setTextoPadronizado] = useState<string | null>(null)
-  const [mensagem, setMensagem] = useState('A imagem serÃ¡ processada com filtro automÃ¡tico de privacidade.')
+  const [mensagem, setMensagem] = useState('A imagem será processada com filtro automático de privacidade.')
 
   function usarGeolocalizacao() {
     if (!navigator.geolocation) {
-      setMensagem('GeolocalizaÃ§Ã£o indisponÃ­vel neste navegador.')
+      setMensagem('Geolocalização indisponível neste navegador.')
       return
     }
     navigator.geolocation.getCurrentPosition(
       (posicao) => {
         setCoords({ latitude: posicao.coords.latitude, longitude: posicao.coords.longitude })
-        setMensagem('Local capturado. O sistema armazenarÃ¡ apenas uma Ã¡rea aproximada.')
+        setMensagem('Local capturado. O sistema armazenará apenas uma área aproximada.')
       },
-      () => setMensagem('NÃ£o foi possÃ­vel capturar sua localizaÃ§Ã£o. Informe um ponto de referÃªncia.'),
+      () => setMensagem('Não foi possível capturar sua localização. Informe um ponto de referência.'),
       { enableHighAccuracy: false, timeout: 8000 },
     )
   }
 
   async function publicar() {
     if (!titulo.trim() || !descricao.trim() || !desafio.trim() || !detalheOculto.trim()) {
-      setMensagem('Preencha tÃ­tulo, descriÃ§Ã£o, desafio e detalhe oculto para continuar.')
+      setMensagem('Preencha título, descrição, desafio e detalhe oculto para continuar.')
       return
     }
     try {
@@ -895,7 +895,7 @@ function ModalItemAchado({
       })
       onPublicado(item)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel publicar o item.')
+      setMensagem(error instanceof Error ? error.message : 'Não foi possível publicar o item.')
     }
   }
 
@@ -909,7 +909,7 @@ function ModalItemAchado({
       setImagemUrl(resultado.imagem_data_url)
       setTagsImagem(resultado.hashtags_ia)
       setTextoPadronizado(resultado.texto_publico_padronizado)
-      setMensagem('Imagem processada: faces e documentos foram protegidos antes da publicaÃ§Ã£o.')
+      setMensagem('Imagem processada: faces e documentos foram protegidos antes da publicação.')
     } catch (error) {
       setMensagem(error instanceof Error ? error.message : 'Falha ao processar a imagem.')
     } finally {
@@ -918,11 +918,11 @@ function ModalItemAchado({
   }
 
   return (
-    <ModalBase titulo="Cadastrar item achado" subtitulo="Somente usuÃ¡rios verificados podem publicar." onClose={onClose}>
+    <ModalBase titulo="Cadastrar item achado" subtitulo="Somente usuários verificados podem publicar." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="grid gap-2 text-sm font-semibold">
-            TÃ­tulo
+            Título
             <input
               className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
               value={titulo}
@@ -938,21 +938,21 @@ function ModalItemAchado({
               onChange={(event) => setCategoria(event.target.value as CategoriaItem)}
             >
               <option value="documentos">Documentos</option>
-              <option value="eletronicos">EletrÃ´nicos</option>
+              <option value="eletronicos">Eletrônicos</option>
               <option value="chaves">Chaves</option>
-              <option value="vestuario">VestuÃ¡rio</option>
+              <option value="vestuario">Vestuário</option>
               <option value="outros">Outros</option>
             </select>
           </label>
         </div>
 
         <label className="grid gap-2 text-sm font-semibold">
-          DescriÃ§Ã£o pÃºblica
+          Descrição pública
           <textarea
             className="min-h-24 rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
             value={descricao}
             onChange={(event) => setDescricao(event.target.value)}
-            placeholder="Descreva sem expor telefone, e-mail ou endereÃ§o exato."
+            placeholder="Descreva sem expor telefone, e-mail ou endereço exato."
           />
         </label>
         <div className="grid gap-2">
@@ -971,10 +971,10 @@ function ModalItemAchado({
             type="file"
             onChange={(event) => void processarImagemSelecionada(event)}
           />
-          {imagemUrl ? <img src={imagemUrl} alt="PrÃ©via protegida do item" className="h-44 w-full rounded-2xl object-cover" /> : null}
+          {imagemUrl ? <img src={imagemUrl} alt="Prévia protegida do item" className="h-44 w-full rounded-2xl object-cover" /> : null}
           {textoPadronizado ? (
             <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">
-              Texto pÃºblico padronizado: <strong>{textoPadronizado}</strong>
+              Texto público padronizado: <strong>{textoPadronizado}</strong>
             </p>
           ) : null}
           {tagsImagem.length > 0 ? (
@@ -989,7 +989,7 @@ function ModalItemAchado({
             className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
             value={local}
             onChange={(event) => setLocal(event.target.value)}
-            placeholder="Ex.: perto da praÃ§a ou estaÃ§Ã£o"
+            placeholder="Ex.: perto da praça ou estação"
           />
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -1008,7 +1008,7 @@ function ModalItemAchado({
               className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
               value={detalheOculto}
               onChange={(event) => setDetalheOculto(event.target.value)}
-              placeholder="Resposta que sÃ³ o dono sabe"
+              placeholder="Resposta que só o dono sabe"
             />
           </label>
         </div>
@@ -1018,7 +1018,7 @@ function ModalItemAchado({
           onClick={usarGeolocalizacao}
         >
           <Camera size={17} aria-hidden="true" />
-          Usar minha localizaÃ§Ã£o
+          Usar minha localização
         </button>
         <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
         <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => void publicar()}>
@@ -1045,26 +1045,26 @@ function ModalPerdiAlgo({
   const [hashtags, setHashtags] = useState('#chave #fitaazul')
   const [ponto, setPonto] = useState<GeoPoint>(pontoInicial)
   const [raio, setRaio] = useState(5000)
-  const [mensagem, setMensagem] = useState('Toque no mapa para posicionar o centro do perÃ­metro de perda.')
+  const [mensagem, setMensagem] = useState('Toque no mapa para posicionar o centro do perímetro de perda.')
 
   function usarMeuLocal() {
     if (!navigator.geolocation) {
-      setMensagem('GeolocalizaÃ§Ã£o indisponÃ­vel neste navegador.')
+      setMensagem('Geolocalização indisponível neste navegador.')
       return
     }
     navigator.geolocation.getCurrentPosition(
       (posicao) => {
         setPonto({ latitude: posicao.coords.latitude, longitude: posicao.coords.longitude })
-        setMensagem('Centro do perÃ­metro ajustado para sua posiÃ§Ã£o atual.')
+        setMensagem('Centro do perímetro ajustado para sua posição atual.')
       },
-      () => setMensagem('NÃ£o foi possÃ­vel obter sua posiÃ§Ã£o. VocÃª pode tocar no mapa para escolher outro ponto.'),
+      () => setMensagem('Não foi possível obter sua posição. Você pode tocar no mapa para escolher outro ponto.'),
       { enableHighAccuracy: false, timeout: 8000 },
     )
   }
 
   async function criar() {
     if (!titulo.trim() || !descricao.trim()) {
-      setMensagem('Preencha tÃ­tulo e descriÃ§Ã£o para ativar o perÃ­metro.')
+      setMensagem('Preencha título e descrição para ativar o perímetro.')
       return
     }
     const parsedHashtags = hashtags
@@ -1084,19 +1084,19 @@ function ModalPerdiAlgo({
       })
       onCriado(resposta.mensagem)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel criar o alerta perdido.')
+      setMensagem(error instanceof Error ? error.message : 'Não foi possível criar o alerta perdido.')
     }
   }
 
   return (
     <ModalBase
-      titulo="PerÃ­metro ativo de perda"
-      subtitulo="Se um item compatÃ­vel entrar nesta Ã¡rea, vocÃª recebe alerta instantÃ¢neo."
+      titulo="Perímetro ativo de perda"
+      subtitulo="Se um item compatível entrar nesta área, você recebe alerta instantâneo."
       onClose={onClose}
     >
       <div className="grid gap-4 p-4">
         <label className="grid gap-2 text-sm font-semibold">
-          TÃ­tulo do item perdido
+          Título do item perdido
           <input
             className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
             value={titulo}
@@ -1105,7 +1105,7 @@ function ModalPerdiAlgo({
           />
         </label>
         <label className="grid gap-2 text-sm font-semibold">
-          DescriÃ§Ã£o
+          Descrição
           <textarea
             className="min-h-24 rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
             value={descricao}
@@ -1128,13 +1128,13 @@ function ModalPerdiAlgo({
           onClick={usarMeuLocal}
         >
           <LocateFixed size={16} aria-hidden="true" />
-          Usar minha posiÃ§Ã£o atual
+          Usar minha posição atual
         </button>
 
         <MapaPerimetro center={ponto} radius={raio} onCenterChange={setPonto} />
 
         <label className="grid gap-2 text-sm font-semibold">
-          Raio do perÃ­metro ({Math.round(raio / 1000)} km)
+          Raio do perímetro ({Math.round(raio / 1000)} km)
           <input
             type="range"
             min={500}
@@ -1147,7 +1147,7 @@ function ModalPerdiAlgo({
 
         <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
         <button className="h-11 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={() => void criar()}>
-          Ativar perÃ­metro de perda
+          Ativar perímetro de perda
         </button>
       </div>
     </ModalBase>
@@ -1168,11 +1168,11 @@ function ModalDesafio({
   onClose: () => void
 }) {
   return (
-    <ModalBase titulo="VerificaÃ§Ã£o do dono" subtitulo="O chat sÃ³ abre apÃ³s validaÃ§Ã£o do detalhe oculto." onClose={onClose}>
+    <ModalBase titulo="Verificação do dono" subtitulo="O chat só abre após validação do detalhe oculto." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <div className="rounded-2xl border border-foundy-blue/30 bg-foundy-blue/10 p-4">
           <p className="text-sm font-bold text-foundy-blue">Desafio do dono</p>
-          <p className="mt-1">{item.desafio_pergunta ?? 'Informe um detalhe que sÃ³ o dono saberia.'}</p>
+          <p className="mt-1">{item.desafio_pergunta ?? 'Informe um detalhe que só o dono saberia.'}</p>
         </div>
         <label className="grid gap-2 text-sm font-semibold">
           Sua resposta
@@ -1201,23 +1201,23 @@ function ModalAguardandoValidacao({
   onValidar: (aprovada: boolean) => void
 }) {
   return (
-    <ModalBase titulo="Aguardando validaÃ§Ã£o do encontrador" onClose={onClose}>
+    <ModalBase titulo="Aguardando validação do encontrador" onClose={onClose}>
       <div className="grid gap-4 p-4">
         <p className="text-sm text-foundy-muted">
-          O encontrador precisa confirmar se a resposta estÃ¡ correta. ReivindicaÃ§Ã£o atual: <strong>{reivindicacaoId ?? 'nÃ£o identificada'}</strong>.
+          O encontrador precisa confirmar se a resposta está correta. Reivindicação atual: <strong>{reivindicacaoId ?? 'não identificada'}</strong>.
         </p>
         <div className="rounded-2xl border border-amber-300/30 bg-amber-200/10 p-4 text-sm text-amber-100">
-          Fluxo de teste: para simular o papel do encontrador neste protÃ³tipo, use os botÃµes abaixo.
+          Fluxo de teste: para simular o papel do encontrador neste protótipo, use os botões abaixo.
         </div>
         <button
           className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950"
           type="button"
           onClick={() => onValidar(true)}
         >
-          A resposta estÃ¡ correta
+          A resposta está correta
         </button>
         <button className="h-11 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={() => onValidar(false)}>
-          A resposta estÃ¡ incorreta
+          A resposta está incorreta
         </button>
       </div>
     </ModalBase>
@@ -1246,11 +1246,11 @@ function ModalChatSeguro({
   onClose: () => void
 }) {
   return (
-    <ModalBase titulo="Chat privado de recuperaÃ§Ã£o" subtitulo={`Item: ${item.titulo}`} onClose={onClose}>
+    <ModalBase titulo="Chat privado de recuperação" subtitulo={`Item: ${item.titulo}`} onClose={onClose}>
       <div className="grid gap-4 p-4">
         <div className="rounded-2xl border border-foundy-green/30 bg-foundy-green/15 p-4 text-sm text-foundy-green">
           <CheckCircle2 className="mb-2" size={18} aria-hidden="true" />
-          Chat desbloqueado com protocolo de seguranÃ§a. Combine a devoluÃ§Ã£o em local pÃºblico e monitorado.
+          Chat desbloqueado com protocolo de segurança. Combine a devolução em local público e monitorado.
         </div>
 
         <div className="max-h-64 space-y-2 overflow-auto rounded-2xl border border-foundy-border bg-foundy-background p-3">
@@ -1288,17 +1288,17 @@ function ModalChatSeguro({
         {denunciarDisponivel ? (
           <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={onDenunciar}>
             <Flag size={16} aria-hidden="true" />
-            Denunciar ExtorsÃ£o
+            Denunciar Extorsão
           </button>
         ) : (
           <div className="rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">
-            O botÃ£o de denÃºncia Ã© ativado automaticamente se houver tentativa de cobranÃ§a indevida.
+            O botão de denúncia é ativado automaticamente se houver tentativa de cobrança indevida.
           </div>
         )}
 
         <div className="rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-3 text-sm text-yellow-100">
           <AlertTriangle className="mb-2" size={16} aria-hidden="true" />
-          Se alguÃ©m pedir PIX, pagamento, cobranÃ§a ou resgate para devolver o item, denuncie imediatamente.
+          Se alguém pedir PIX, pagamento, cobrança ou resgate para devolver o item, denuncie imediatamente.
         </div>
       </div>
     </ModalBase>
