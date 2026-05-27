@@ -5,7 +5,11 @@ from email.message import EmailMessage
 from app.core.config import settings
 
 
-async def send_verification_email(to_email: str, token: str) -> None:
+def has_smtp_settings() -> bool:
+    return bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
+
+
+async def send_verification_email(to_email: str, token: str) -> bool:
     link = f"{settings.app_public_url.rstrip('/')}/verificar-email?token={token}"
     subject = "Confirme seu e-mail na Foundy"
     body = (
@@ -14,9 +18,16 @@ async def send_verification_email(to_email: str, token: str) -> None:
         f"{link}\n\n"
         "Se você não pediu isso, ignore esta mensagem."
     )
+    return await _send_email(to_email=to_email, subject=subject, body=body)
 
-    if not settings.smtp_host or not settings.smtp_user or not settings.smtp_password:
-        return
+
+async def send_support_email(subject: str, body: str) -> bool:
+    return await _send_email(to_email=settings.support_email, subject=subject, body=body)
+
+
+async def _send_email(to_email: str, subject: str, body: str) -> bool:
+    if not has_smtp_settings():
+        return False
 
     message = EmailMessage()
     message["Subject"] = subject
@@ -25,6 +36,7 @@ async def send_verification_email(to_email: str, token: str) -> None:
     message.set_content(body)
 
     await asyncio.to_thread(_send_message, message)
+    return True
 
 
 def _send_message(message: EmailMessage) -> None:
