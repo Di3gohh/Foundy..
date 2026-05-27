@@ -1,21 +1,26 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import secrets
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field, HttpUrl
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from postgrest.exceptions import APIError
 
 from app.core.config import settings
-from app.core.filters import scan_item_text
+from app.core.filters import scan_chat_message, scan_item_text
 from app.core.geo import mask_coordinates, validate_coordinates
 from app.core.security import hash_password
 from app.db.supabase_client import get_supabase
+from app.services.ai_processing import generate_hashtag_descriptors
+from app.services.email_service import send_support_email
 
 
 router = APIRouter()
 
 CategoriaItem = Literal["documentos", "eletronicos", "chaves", "vestuario", "outros"]
+StatusItem = Literal["publicado", "em_conversa", "devolvido", "arquivado", "destinado para doaÃ§Ã£o"]
+StatusSala = Literal["bloqueado", "aberto", "encerrado", "em_revisao"]
 
 
 class ItemAchadoCreate(BaseModel):
@@ -25,7 +30,7 @@ class ItemAchadoCreate(BaseModel):
     latitude: float
     longitude: float
     local_descricao: str | None = Field(default=None, max_length=160)
-    imagem_url: HttpUrl | None = None
+    imagem_url: str | None = Field(default=None, max_length=5_000_000)
     usuario_id: UUID | None = None
     desafio_pergunta: str = Field(min_length=6, max_length=240)
     detalhe_oculto: str = Field(min_length=2, max_length=240)
@@ -37,8 +42,8 @@ class ItemAchadoUpdate(BaseModel):
     descricao: str | None = Field(default=None, min_length=10, max_length=2000)
     categoria: CategoriaItem | None = None
     local_descricao: str | None = Field(default=None, max_length=160)
-    imagem_url: HttpUrl | None = None
-    status: Literal["publicado", "em_conversa", "devolvido", "arquivado"] | None = None
+    imagem_url: str | None = Field(default=None, max_length=5_000_000)
+    status: StatusItem | None = None
 
 
 class ItemAchadoOut(BaseModel):
@@ -57,6 +62,9 @@ class ItemAchadoOut(BaseModel):
     desafio_pergunta: str | None = None
     chat_desbloqueado: bool = False
     tags_ia: list[str] = Field(default_factory=list)
+    hashtags_ia: list[str] = Field(default_factory=list)
+    premium_ativo: bool = False
+    premium_expira_em: datetime | None = None
 
 
 class ReivindicacaoCreate(BaseModel):
@@ -66,14 +74,73 @@ class ReivindicacaoCreate(BaseModel):
 
 class ValidacaoReivindicacao(BaseModel):
     aprovada: bool
+    encontrador_usuario_id: UUID
     observacao: str | None = Field(default=None, max_length=500)
+
+
+class MensagemChatCreate(BaseModel):
+    usuario_id: UUID
+    mensagem: str = Field(min_length=1, max_length=2000)
+
+
+class MensagemChatOut(BaseModel):
+    id: UUID
+    sala_chat_id: UUID | None = None
+    item_achado_id: UUID
+    remetente_usuario_id: UUID | None = None
+    destinatario_usuario_id: UUID | None = None
+    mensagem: str
+    status_moderacao: str
+    motivos_moderacao: list[str] = Field(default_factory=list)
+    denunciar_extorsao_visivel: bool
+    criado_em: datetime
+
+
+class DenunciaExtorsaoCreate(BaseModel):
+    usuario_id: UUID
+    mensagem_chat_id: UUID | None = None
+    motivo: str = Field(min_length=5, max_length=500)
+
+
+class LostBoostCheckoutCreate(BaseModel):
+    usuario_id: UUID
+    valor_centavos: int = Field(default=990, ge=100, le=9900)
+
+
+class PixCallbackSimulation(BaseModel):
+    pix_referencia: str = Field(min_length=8, max_length=160)
 
 
 def _wkt_point(longitude: float, latitude: float) -> str:
     return f"POINT({longitude} {latitude})"
 
 
+def _normalize_tokens(values: list[str]) -> list[str]:
+    normalized = []
+    for value in values:
+        cleaned = value.strip().lstrip("#").casefold().replace(" ", "")
+        if cleaned and cleaned not in normalized:
+            normalized.append(cleaned)
+    return normalized[:12]
+
+
+def _normalize_display_hashtags(values: list[str]) -> list[str]:
+    display: list[str] = []
+    for value in values:
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        if not cleaned.startswith("#"):
+            cleaned = f"#{cleaned}"
+        if cleaned not in display:
+            display.append(cleaned)
+    return display[:12]
+
+
 def _normalizar_item(row: dict) -> ItemAchadoOut:
+    tags_ia = list(row.get("tags_ia") or [])
+    hashtags_raw = list(row.get("hashtags") or row.get("hashtags_ia") or tags_ia)
+
     return ItemAchadoOut(
         id=row["id"],
         titulo=row["titulo"],
@@ -89,12 +156,67 @@ def _normalizar_item(row: dict) -> ItemAchadoOut:
         criado_em=row["criado_em"],
         desafio_pergunta=row.get("desafio_pergunta"),
         chat_desbloqueado=bool(row.get("chat_desbloqueado") or False),
-        tags_ia=list(row.get("tags_ia") or []),
+        tags_ia=tags_ia,
+        hashtags_ia=_normalize_display_hashtags(hashtags_raw),
+        premium_ativo=bool(row.get("premium_ativo") or False),
+        premium_expira_em=row.get("premium_expira_em"),
     )
+
+
+async def _buscar_usuario_verificado(usuario_id: UUID) -> dict:
+    supabase = get_supabase()
+    response = await (
+        supabase.table("usuarios")
+        .select("id,nome,email_verificado_em,nivel_perfil,pontos_luz")
+        .eq("id", str(usuario_id))
+        .is_("removido_em", "null")
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="UsuÃ¡rio nÃ£o encontrado.")
+
+    usuario = response.data[0]
+    if usuario.get("email_verificado_em") is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Confirme seu e-mail para publicar, reivindicar e conversar no chat seguro.",
+        )
+
+    return usuario
+
+
+async def _buscar_sala_e_participacao(sala_chat_id: UUID, usuario_id: UUID) -> dict:
+    supabase = get_supabase()
+    response = await (
+        supabase.table("salas_chat")
+        .select("id,item_achado_id,encontrador_usuario_id,dono_usuario_id,status")
+        .eq("id", str(sala_chat_id))
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sala de chat nÃ£o encontrada.")
+
+    sala = response.data[0]
+    participantes = {
+        str(sala.get("encontrador_usuario_id")) if sala.get("encontrador_usuario_id") else None,
+        str(sala.get("dono_usuario_id")) if sala.get("dono_usuario_id") else None,
+    }
+    if str(usuario_id) not in participantes:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="VocÃª nÃ£o participa desta sala.")
+    return sala
 
 
 @router.post("", response_model=ItemAchadoOut, status_code=status.HTTP_201_CREATED)
 async def cadastrar_item_achado(payload: ItemAchadoCreate) -> ItemAchadoOut:
+    if payload.usuario_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Para publicar, faÃ§a login com e-mail verificado.",
+        )
+
+    await _buscar_usuario_verificado(payload.usuario_id)
+
     titulo = payload.titulo.strip()
     descricao = payload.descricao.strip()
     local_descricao = payload.local_descricao.strip() if payload.local_descricao else None
@@ -112,9 +234,12 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate) -> ItemAchadoOut:
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
+    hashtags_ia_display = generate_hashtag_descriptors(titulo, descricao, " ".join(payload.tags_ia))
+    tokens = _normalize_tokens(hashtags_ia_display + payload.tags_ia)
+
     supabase = get_supabase()
     item = {
-        "usuario_id": str(payload.usuario_id) if payload.usuario_id else None,
+        "usuario_id": str(payload.usuario_id),
         "titulo": titulo,
         "descricao": descricao,
         "categoria": payload.categoria,
@@ -125,27 +250,33 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate) -> ItemAchadoOut:
         "status": "publicado",
         "desafio_pergunta": payload.desafio_pergunta.strip(),
         "detalhe_oculto_hash": hash_password(payload.detalhe_oculto.strip().casefold()),
-        "tags_ia": [tag.strip().casefold() for tag in payload.tags_ia if tag.strip()],
+        "tags_ia": tokens,
+        "hashtags": tokens,
+        "ultimo_movimento_em": datetime.now(timezone.utc).isoformat(),
     }
 
     try:
         response = await (
             supabase.table("itens_achados")
             .insert(item)
-            .select("id,titulo,descricao,categoria,local_descricao,raio_mascara_metros,imagem_url,status,criado_em,desafio_pergunta,tags_ia")
+            .select(
+                "id,titulo,descricao,categoria,local_descricao,raio_mascara_metros,"
+                "imagem_url,status,criado_em,desafio_pergunta,tags_ia,hashtags,"
+                "chat_desbloqueado,premium_ativo,premium_expira_em"
+            )
             .execute()
         )
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível cadastrar o item.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel cadastrar o item.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="O item foi enviado, mas não retornou do banco.")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="O item foi enviado, mas nÃ£o retornou do banco.")
 
     created = response.data[0]
     created["latitude_aproximada"] = latitude_aproximada
     created["longitude_aproximada"] = longitude_aproximada
     created["distancia_metros"] = None
-    created["chat_desbloqueado"] = False
+    created["hashtags_ia"] = hashtags_ia_display
     return _normalizar_item(created)
 
 
@@ -173,13 +304,20 @@ async def listar_itens_achados_por_proximidade(
             },
         ).execute()
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível carregar os itens.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel carregar os itens.") from exc
 
     return [_normalizar_item(row) for row in response.data]
 
 
 @router.post("/{item_id}/reivindicar", status_code=status.HTTP_201_CREATED)
 async def reivindicar_item(item_id: UUID, payload: ReivindicacaoCreate) -> dict[str, str]:
+    if payload.usuario_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="FaÃ§a login com e-mail verificado antes de reivindicar um item.",
+        )
+    await _buscar_usuario_verificado(payload.usuario_id)
+
     supabase = get_supabase()
     try:
         response = await (
@@ -187,7 +325,7 @@ async def reivindicar_item(item_id: UUID, payload: ReivindicacaoCreate) -> dict[
             .insert(
                 {
                     "item_achado_id": str(item_id),
-                    "usuario_reivindicante_id": str(payload.usuario_id) if payload.usuario_id else None,
+                    "usuario_reivindicante_id": str(payload.usuario_id),
                     "resposta_desafio": payload.resposta_desafio.strip(),
                     "status": "aguardando_validacao",
                 }
@@ -196,21 +334,42 @@ async def reivindicar_item(item_id: UUID, payload: ReivindicacaoCreate) -> dict[
             .execute()
         )
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível iniciar a verificação.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel iniciar a verificaÃ§Ã£o.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item não encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nÃ£o encontrado.")
 
     return {
-        "mensagem": "Resposta enviada ao encontrador. O chat será liberado após validação.",
+        "mensagem": "Resposta enviada ao encontrador. O chat serÃ¡ liberado apÃ³s validaÃ§Ã£o.",
         "reivindicacao_id": response.data[0]["id"],
     }
 
 
 @router.post("/reivindicacoes/{reivindicacao_id}/validar")
-async def validar_reivindicacao(reivindicacao_id: UUID, payload: ValidacaoReivindicacao) -> dict[str, str]:
+async def validar_reivindicacao(reivindicacao_id: UUID, payload: ValidacaoReivindicacao) -> dict[str, object]:
+    await _buscar_usuario_verificado(payload.encontrador_usuario_id)
     supabase = get_supabase()
-    status_validacao = "aprovada" if payload.aprovada else "recusada"
+
+    reivindicacao = await (
+        supabase.table("reivindicacoes_item")
+        .select("id,item_achado_id")
+        .eq("id", str(reivindicacao_id))
+        .execute()
+    )
+    if not reivindicacao.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ReivindicaÃ§Ã£o nÃ£o encontrada.")
+
+    item = await (
+        supabase.table("itens_achados")
+        .select("id,usuario_id")
+        .eq("id", reivindicacao.data[0]["item_achado_id"])
+        .execute()
+    )
+    if not item.data or item.data[0].get("usuario_id") != str(payload.encontrador_usuario_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas quem encontrou o item pode validar esta resposta.",
+        )
 
     try:
         response = await supabase.rpc(
@@ -222,17 +381,284 @@ async def validar_reivindicacao(reivindicacao_id: UUID, payload: ValidacaoReivin
             },
         ).execute()
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível validar a resposta.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel validar a resposta.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reivindicação não encontrada.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ReivindicaÃ§Ã£o nÃ£o encontrada.")
+
+    sala_chat_id: str | None = None
+    if payload.aprovada:
+        sala = await (
+            supabase.table("salas_chat")
+            .select("id")
+            .eq("reivindicacao_id", str(reivindicacao_id))
+            .limit(1)
+            .execute()
+        )
+        if sala.data:
+            sala_chat_id = sala.data[0]["id"]
 
     return {
         "mensagem": (
             "Resposta validada. Chat seguro liberado."
-            if status_validacao == "aprovada"
+            if payload.aprovada
             else "Resposta recusada. O chat continua bloqueado."
+        ),
+        "chat_desbloqueado": payload.aprovada,
+        "sala_chat_id": sala_chat_id,
+    }
+
+
+@router.get("/salas/{sala_chat_id}/mensagens", response_model=list[MensagemChatOut])
+async def listar_mensagens_chat(sala_chat_id: UUID, usuario_id: UUID) -> list[MensagemChatOut]:
+    await _buscar_usuario_verificado(usuario_id)
+    sala = await _buscar_sala_e_participacao(sala_chat_id, usuario_id)
+    supabase = get_supabase()
+
+    response = await (
+        supabase.table("mensagens_chat")
+        .select(
+            "id,sala_chat_id,item_achado_id,remetente_usuario_id,destinatario_usuario_id,"
+            "mensagem,status_moderacao,motivos_moderacao,criado_em"
         )
+        .eq("sala_chat_id", str(sala_chat_id))
+        .order("criado_em")
+        .execute()
+    )
+
+    denunciar_extorsao_visivel = sala["status"] == "em_revisao"
+    mensagens: list[MensagemChatOut] = []
+    for mensagem in response.data:
+        flagged = mensagem["status_moderacao"] in {"suspeita_extorsao", "em_revisao"}
+        mensagens.append(
+            MensagemChatOut(
+                **mensagem,
+                denunciar_extorsao_visivel=denunciar_extorsao_visivel or flagged,
+                motivos_moderacao=list(mensagem.get("motivos_moderacao") or []),
+            )
+        )
+    return mensagens
+
+
+@router.post("/salas/{sala_chat_id}/mensagens", response_model=MensagemChatOut, status_code=status.HTTP_201_CREATED)
+async def enviar_mensagem_chat(sala_chat_id: UUID, payload: MensagemChatCreate) -> MensagemChatOut:
+    await _buscar_usuario_verificado(payload.usuario_id)
+    sala = await _buscar_sala_e_participacao(sala_chat_id, payload.usuario_id)
+    if sala["status"] == "bloqueado":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="O chat ainda estÃ¡ bloqueado pelo desafio do dono.")
+
+    mensagem = payload.mensagem.strip()
+    scan = scan_chat_message(mensagem)
+    status_moderacao = "suspeita_extorsao" if scan.flagged else "limpa"
+
+    destinatario = (
+        sala.get("dono_usuario_id")
+        if str(sala.get("encontrador_usuario_id")) == str(payload.usuario_id)
+        else sala.get("encontrador_usuario_id")
+    )
+
+    supabase = get_supabase()
+    response = await (
+        supabase.table("mensagens_chat")
+        .insert(
+            {
+                "sala_chat_id": str(sala_chat_id),
+                "item_achado_id": sala["item_achado_id"],
+                "remetente_usuario_id": str(payload.usuario_id),
+                "destinatario_usuario_id": str(destinatario) if destinatario else None,
+                "mensagem": mensagem,
+                "status_moderacao": status_moderacao,
+                "motivos_moderacao": scan.reasons,
+                "bloqueada_por_desafio": False,
+            }
+        )
+        .select(
+            "id,sala_chat_id,item_achado_id,remetente_usuario_id,destinatario_usuario_id,"
+            "mensagem,status_moderacao,motivos_moderacao,criado_em"
+        )
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel persistir a mensagem.")
+
+    if scan.flagged:
+        await (
+            supabase.table("salas_chat")
+            .update({"status": "em_revisao", "atualizado_em": datetime.now(timezone.utc).isoformat()})
+            .eq("id", str(sala_chat_id))
+            .execute()
+        )
+        for participante in [sala.get("encontrador_usuario_id"), sala.get("dono_usuario_id")]:
+            if not participante:
+                continue
+            await (
+                supabase.table("notificacoes")
+                .insert(
+                    {
+                        "usuario_id": participante,
+                        "tipo": "chat",
+                        "titulo": "PossÃ­vel extorsÃ£o detectada",
+                        "mensagem": "Detectamos termos financeiros suspeitos na conversa. Use o botÃ£o Denunciar ExtorsÃ£o.",
+                        "item_achado_id": sala["item_achado_id"],
+                    }
+                )
+                .execute()
+            )
+
+    return MensagemChatOut(
+        **response.data[0],
+        motivos_moderacao=list(response.data[0].get("motivos_moderacao") or []),
+        denunciar_extorsao_visivel=scan.flagged,
+    )
+
+
+@router.post("/salas/{sala_chat_id}/denunciar-extorsao", status_code=status.HTTP_201_CREATED)
+async def denunciar_extorsao(
+    sala_chat_id: UUID,
+    payload: DenunciaExtorsaoCreate,
+    background_tasks: BackgroundTasks,
+) -> dict[str, str]:
+    await _buscar_usuario_verificado(payload.usuario_id)
+    sala = await _buscar_sala_e_participacao(sala_chat_id, payload.usuario_id)
+    supabase = get_supabase()
+
+    await (
+        supabase.table("denuncias_extorsao")
+        .insert(
+            {
+                "sala_chat_id": str(sala_chat_id),
+                "item_achado_id": sala["item_achado_id"],
+                "usuario_denunciante_id": str(payload.usuario_id),
+                "mensagem_chat_id": str(payload.mensagem_chat_id) if payload.mensagem_chat_id else None,
+                "motivo": payload.motivo.strip(),
+                "status": "pendente",
+            }
+        )
+        .execute()
+    )
+
+    await (
+        supabase.table("salas_chat")
+        .update({"status": "em_revisao", "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("id", str(sala_chat_id))
+        .execute()
+    )
+
+    await (
+        supabase.table("notificacoes")
+        .insert(
+            {
+                "usuario_id": str(payload.usuario_id),
+                "tipo": "sistema",
+                "titulo": "DenÃºncia registrada",
+                "mensagem": "Recebemos sua denÃºncia e encaminhamos para revisÃ£o prioritÃ¡ria.",
+                "item_achado_id": sala["item_achado_id"],
+            }
+        )
+        .execute()
+    )
+    background_tasks.add_task(
+        send_support_email,
+        "Denúncia de extorsão no Foundy",
+        (
+            "Uma denúncia de extorsão foi registrada no Foundy.\n\n"
+            f"Sala de chat: {sala_chat_id}\n"
+            f"Item achado: {sala['item_achado_id']}\n"
+            f"Usuário denunciante: {payload.usuario_id}\n"
+            f"Mensagem denunciada: {payload.mensagem_chat_id or 'não informada'}\n"
+            f"Motivo informado: {payload.motivo.strip()}\n\n"
+            "Acesse o painel/Supabase para revisar a sala e aplicar as medidas necessárias."
+        ),
+    )
+    return {
+        "mensagem": (
+            "Denúncia de extorsão enviada com sucesso. "
+            f"Nosso suporte foi avisado em {settings.support_email}."
+        )
+    }
+
+
+@router.post("/{item_id}/lost-boost/checkout", status_code=status.HTTP_201_CREATED)
+async def criar_checkout_lost_boost(item_id: UUID, payload: LostBoostCheckoutCreate) -> dict[str, str]:
+    await _buscar_usuario_verificado(payload.usuario_id)
+    supabase = get_supabase()
+
+    item = await (
+        supabase.table("itens_achados")
+        .select("id,usuario_id")
+        .eq("id", str(item_id))
+        .limit(1)
+        .execute()
+    )
+    if not item.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nÃ£o encontrado.")
+    if item.data[0].get("usuario_id") != str(payload.usuario_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas quem publicou o item pode solicitar o Lost Boost.",
+        )
+
+    pix_reference = f"foundy-{item_id.hex[:8]}-{secrets.token_hex(4)}"
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+
+    await (
+        supabase.table("lost_boost_pagamentos")
+        .insert(
+            {
+                "item_achado_id": str(item_id),
+                "usuario_id": str(payload.usuario_id),
+                "valor_centavos": payload.valor_centavos,
+                "pix_referencia": pix_reference,
+                "status": "pendente",
+                "expira_em": expires_at.isoformat(),
+            }
+        )
+        .execute()
+    )
+
+    return {
+        "mensagem": "CobranÃ§a PIX simulada criada. Use o callback de teste para confirmar pagamento.",
+        "pix_referencia": pix_reference,
+        "expira_em": expires_at.isoformat(),
+    }
+
+
+@router.post("/lost-boost/simular-pix-callback")
+async def simular_callback_pix(payload: PixCallbackSimulation) -> dict[str, str]:
+    supabase = get_supabase()
+    pagamento = await (
+        supabase.table("lost_boost_pagamentos")
+        .select("id,item_achado_id,status")
+        .eq("pix_referencia", payload.pix_referencia)
+        .limit(1)
+        .execute()
+    )
+    if not pagamento.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ReferÃªncia PIX nÃ£o encontrada.")
+
+    registro = pagamento.data[0]
+    if registro["status"] == "pago":
+        return {"mensagem": "Pagamento jÃ¡ confirmado anteriormente."}
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    premium_until = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+
+    await (
+        supabase.table("lost_boost_pagamentos")
+        .update({"status": "pago", "pago_em": now_iso})
+        .eq("id", registro["id"])
+        .execute()
+    )
+    await (
+        supabase.table("itens_achados")
+        .update({"premium_ativo": True, "premium_expira_em": premium_until, "atualizado_em": now_iso})
+        .eq("id", registro["item_achado_id"])
+        .execute()
+    )
+
+    return {
+        "mensagem": "Lost Boost ativado por 3 dias. Seu item foi priorizado no mapa regional.",
+        "premium_expira_em": premium_until,
     }
 
 
@@ -245,14 +671,16 @@ async def atualizar_item_achado(item_id: UUID, payload: ItemAchadoUpdate) -> dic
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Informe ao menos um campo para atualizar.")
 
+    updates["atualizado_em"] = datetime.now(timezone.utc).isoformat()
+
     supabase = get_supabase()
     try:
         response = await supabase.table("itens_achados").update(updates).eq("id", str(item_id)).select("id").execute()
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível atualizar o item.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel atualizar o item.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item não encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nÃ£o encontrado.")
 
     return {"mensagem": "Item atualizado com sucesso."}
 
@@ -263,13 +691,14 @@ async def arquivar_item_achado(item_id: UUID) -> None:
     try:
         response = await (
             supabase.table("itens_achados")
-            .update({"status": "arquivado"})
+            .update({"status": "arquivado", "atualizado_em": datetime.now(timezone.utc).isoformat()})
             .eq("id", str(item_id))
             .select("id")
             .execute()
         )
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível arquivar o item.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel arquivar o item.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item não encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nÃ£o encontrado.")
+
