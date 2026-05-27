@@ -6,12 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.pool import close_db, connect_to_db
 from app.db.supabase_client import close_supabase, init_supabase
-from app.routers import auth, chat, itens_achados, items, karma, notificacoes, processamento, usuarios
+from app.routers import itens_achados, karma, notificacoes, processamento, usuarios
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_supabase(settings.supabase_url, settings.supabase_key)
+    await init_supabase(settings.supabase_url, settings.supabase_backend_key)
     if settings.database_url:
         await connect_to_db(settings.database_url)
     yield
@@ -34,10 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router, prefix="/auth", tags=["Autenticação"])
 app.include_router(usuarios.router, prefix="/usuarios", tags=["Usuários"])
-app.include_router(items.router, prefix="/items", tags=["Itens"])
-app.include_router(chat.router, prefix="/chat", tags=["Chat Seguro"])
 app.include_router(itens_achados.router, prefix="/itens-achados", tags=["Itens Achados"])
 app.include_router(notificacoes.router, prefix="/notificacoes", tags=["Notificações"])
 app.include_router(processamento.router, prefix="/processamento", tags=["Processamento de Imagem"])
