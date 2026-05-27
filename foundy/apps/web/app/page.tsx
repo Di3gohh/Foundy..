@@ -6,6 +6,7 @@ import {
   Bell,
   Camera,
   CheckCircle2,
+  FileText,
   Flag,
   LocateFixed,
   MapPin,
@@ -54,7 +55,7 @@ const MapaPerimetro = dynamic(() => import('@/components/MapaPerimetro'), {
   ),
 })
 
-type ModalAtivo = 'auth' | 'acao' | 'item' | 'perdi' | 'desafio' | 'aguardando' | 'chat' | null
+type ModalAtivo = 'auth' | 'acao' | 'item' | 'perdi' | 'desafio' | 'aguardando' | 'chat' | 'seguranca' | 'termos' | null
 type CategoriaItem = ItemAchado['categoria']
 type GeoPoint = { latitude: number; longitude: number }
 
@@ -134,6 +135,24 @@ const categorias: Record<CategoriaItem, { label: string; icon: string }> = {
   vestuario: { label: 'Vestuário', icon: '🧥' },
   outros: { label: 'Pets e outros', icon: '🐶' },
 }
+
+const pilaresSeguranca = [
+  {
+    titulo: 'Local público',
+    texto: 'Entregas sempre em pontos movimentados, iluminados e com segurança.',
+    selo: 'Sem endereço exato',
+  },
+  {
+    titulo: 'Luz do dia',
+    texto: 'Encontros recomendados entre 8h e 18h, quando há mais movimento.',
+    selo: 'Horário seguro',
+  },
+  {
+    titulo: 'Pergunta secreta',
+    texto: 'O chat só avança quando o dono comprova um detalhe oculto do item.',
+    selo: 'Prova de posse',
+  },
+]
 
 function haversineDistanceMeters(from: GeoPoint, to: GeoPoint) {
   const earthRadius = 6_371_000
@@ -352,11 +371,11 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-dvh bg-foundy-background text-foundy-foreground">
+    <main className="foundy-app-shell min-h-dvh bg-foundy-background text-foundy-foreground">
       <nav className="sticky top-0 z-40 border-b border-foundy-border bg-foundy-surface/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8">
-          <button className="flex items-center gap-3 text-left" type="button" onClick={() => void carregarItens()}>
-            <span className="grid size-10 place-items-center rounded-2xl bg-foundy-blue text-white shadow-lg shadow-foundy-blue/30">
+          <button className="foundy-pressable flex items-center gap-3 text-left" type="button" onClick={() => void carregarItens()}>
+            <span className="foundy-logo-mark grid size-10 place-items-center rounded-2xl bg-foundy-blue text-white shadow-lg shadow-foundy-blue/30">
               <MapPin size={22} aria-hidden="true" />
             </span>
             <span>
@@ -367,14 +386,30 @@ export default function Home() {
 
           <div className="flex items-center gap-2">
             <button
-              className="hidden h-10 items-center rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60 sm:inline-flex"
+              className="foundy-pressable hidden h-10 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60 md:inline-flex"
+              type="button"
+              onClick={() => setModalAtivo('seguranca')}
+            >
+              <ShieldCheck size={16} aria-hidden="true" />
+              Segurança
+            </button>
+            <button
+              className="foundy-pressable hidden h-10 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60 md:inline-flex"
+              type="button"
+              onClick={() => setModalAtivo('termos')}
+            >
+              <FileText size={16} aria-hidden="true" />
+              LGPD
+            </button>
+            <button
+              className="foundy-pressable hidden h-10 items-center rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60 sm:inline-flex"
               type="button"
               onClick={() => setModalAtivo('auth')}
             >
               {sessao ? `Olá, ${sessao.nome}` : 'Entrar'}
             </button>
             <button
-              className="grid size-10 place-items-center rounded-xl border border-foundy-border text-foundy-foreground transition hover:border-foundy-blue/60"
+              className="foundy-pressable grid size-10 place-items-center rounded-xl border border-foundy-border text-foundy-foreground transition hover:border-foundy-blue/60"
               type="button"
               aria-label="Notificações"
               onClick={() => setMensagemSistema('As notificações de perímetro ativo aparecerão aqui em tempo real.')}
@@ -386,24 +421,37 @@ export default function Home() {
       </nav>
 
       <section className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <div ref={mapSectionRef} className="relative rounded-3xl border border-foundy-border bg-foundy-surface p-4 shadow-2xl shadow-black/25 sm:p-5">
+        <div ref={mapSectionRef} className="foundy-hero-panel relative overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface p-4 shadow-2xl shadow-black/25 sm:p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-foundy-blue">O Radar hiperlocal</p>
-              <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">Mapa com área aproximada e recuperação segura</h1>
+            <div className="max-w-3xl">
+              <p className="foundy-eyebrow text-sm font-semibold text-foundy-blue">O Radar hiperlocal</p>
+              <h1 className="mt-1 text-3xl font-black tracking-tight sm:text-5xl">O que se perdeu, volta com segurança.</h1>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-foundy-muted sm:text-base">
+                Encontre itens por região aproximada, converse só após prova de posse e siga um protocolo claro para devoluções em locais públicos.
+              </p>
             </div>
-            <button
-              className="inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60"
-              type="button"
-              onClick={obterMeuLocal}
-            >
-              <LocateFixed size={17} aria-hidden="true" />
-              Perto de mim
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="foundy-pressable inline-flex h-11 items-center gap-2 rounded-xl bg-foundy-blue px-4 text-sm font-black text-white shadow-lg shadow-foundy-blue/25"
+                type="button"
+                onClick={abrirAcaoRapida}
+              >
+                <Plus size={17} aria-hidden="true" />
+                Começar agora
+              </button>
+              <button
+                className="foundy-pressable inline-flex h-11 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60"
+                type="button"
+                onClick={obterMeuLocal}
+              >
+                <LocateFixed size={17} aria-hidden="true" />
+                Perto de mim
+              </button>
+            </div>
           </div>
 
           <div className="relative">
-            <div className="absolute inset-x-3 top-3 z-20 rounded-2xl border border-foundy-border bg-foundy-surface/95 p-3 shadow-xl backdrop-blur">
+            <div className="foundy-floating-search absolute inset-x-3 top-3 z-20 rounded-2xl border border-foundy-border bg-foundy-surface/95 p-3 shadow-xl backdrop-blur">
               <div className="mb-2 flex items-center gap-2 rounded-xl border border-foundy-border bg-foundy-background px-3">
                 <Search size={16} aria-hidden="true" className="text-foundy-muted" />
                 <input
@@ -415,7 +463,7 @@ export default function Home() {
               </div>
               <div className="flex gap-2 overflow-x-auto pb-1">
                 <button
-                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${
+                  className={`foundy-pressable rounded-full border px-3 py-1.5 text-xs font-bold ${
                     filtro === 'todos'
                       ? 'border-foundy-blue bg-foundy-blue text-white'
                       : 'border-foundy-border text-foundy-foreground'
@@ -427,7 +475,7 @@ export default function Home() {
                 </button>
                 {(Object.keys(categorias) as CategoriaItem[]).map((categoria) => (
                   <button
-                    className={`rounded-full border px-3 py-1.5 text-xs font-bold ${
+                    className={`foundy-pressable rounded-full border px-3 py-1.5 text-xs font-bold ${
                       filtro === categoria
                         ? 'border-foundy-blue bg-foundy-blue text-white'
                         : 'border-foundy-border text-foundy-foreground'
@@ -462,6 +510,23 @@ export default function Home() {
           </div>
         </div>
 
+        <section className="grid gap-3 md:grid-cols-3" aria-label="Pilares de segurança Foundy">
+          {pilaresSeguranca.map((pilar) => (
+            <button
+              className="foundy-trust-card foundy-pressable rounded-3xl border border-foundy-border bg-foundy-surface/80 p-4 text-left shadow-xl shadow-black/10"
+              key={pilar.titulo}
+              type="button"
+              onClick={() => setModalAtivo('seguranca')}
+            >
+              <span className="mb-3 inline-flex rounded-full bg-foundy-green/15 px-3 py-1 text-xs font-black text-foundy-green">
+                {pilar.selo}
+              </span>
+              <h2 className="text-lg font-black tracking-tight">{pilar.titulo}</h2>
+              <p className="mt-2 text-sm leading-6 text-foundy-muted">{pilar.texto}</p>
+            </button>
+          ))}
+        </section>
+
         <section className="grid gap-4" aria-label="Feed de itens achados">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -471,7 +536,7 @@ export default function Home() {
               </p>
             </div>
             <button
-              className="inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60"
+              className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60"
               type="button"
               onClick={() => void carregarItens(localUsuario?.latitude, localUsuario?.longitude)}
             >
@@ -481,7 +546,7 @@ export default function Home() {
           </div>
 
           {itensFiltrados.map((item) => (
-            <article className="overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface" key={item.id}>
+            <article className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface" key={item.id}>
               <div className="relative h-52 overflow-hidden">
                 <img
                   src={item.imagem_url ?? placeholdersPorCategoria[item.categoria]}
@@ -522,14 +587,14 @@ export default function Home() {
 
                 <div className="flex flex-wrap gap-2">
                   <button
-                    className="rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950 transition hover:brightness-110"
+                    className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950 transition hover:brightness-110"
                     type="button"
                     onClick={() => iniciarFluxoReivindicacao(item)}
                   >
                     É meu
                   </button>
                   <button
-                    className="rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold text-foundy-foreground"
+                    className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold text-foundy-foreground"
                     type="button"
                     onClick={() => selecionarItemNoMapa(item)}
                   >
@@ -553,8 +618,39 @@ export default function Home() {
         </section>
       </section>
 
+      <footer className="mx-auto grid max-w-7xl gap-3 px-4 pb-28 pt-2 sm:px-6 lg:px-8">
+        <div className="rounded-3xl border border-foundy-border bg-foundy-surface/75 p-4">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <div>
+              <p className="text-sm font-black text-foundy-green">Foundy protege pessoas antes de proteger objetos.</p>
+              <p className="mt-1 text-sm text-foundy-muted">
+                Leia o protocolo de encontro seguro e os termos de privacidade antes de combinar qualquer devolução.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-bold"
+                type="button"
+                onClick={() => setModalAtivo('seguranca')}
+              >
+                <ShieldCheck size={16} aria-hidden="true" />
+                Manifesto de segurança
+              </button>
+              <button
+                className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-bold"
+                type="button"
+                onClick={() => setModalAtivo('termos')}
+              >
+                <FileText size={16} aria-hidden="true" />
+                Termos e LGPD
+              </button>
+            </div>
+          </div>
+        </div>
+      </footer>
+
       <button
-        className="fixed bottom-6 left-1/2 z-40 grid size-16 -translate-x-1/2 place-items-center rounded-full bg-foundy-blue text-white shadow-2xl shadow-foundy-blue/35 transition hover:scale-105"
+        className="foundy-fab foundy-pressable fixed bottom-6 left-1/2 z-40 grid size-16 -translate-x-1/2 place-items-center rounded-full bg-foundy-blue text-white shadow-2xl shadow-foundy-blue/35 transition hover:scale-105"
         type="button"
         aria-label="Abrir ações rápidas"
         onClick={abrirAcaoRapida}
@@ -651,6 +747,10 @@ export default function Home() {
           onClose={() => setModalAtivo(null)}
         />
       ) : null}
+
+      {modalAtivo === 'seguranca' ? <ModalManifestoSeguranca onClose={() => setModalAtivo(null)} /> : null}
+
+      {modalAtivo === 'termos' ? <ModalTermosLgpd onClose={() => setModalAtivo(null)} /> : null}
     </main>
   )
 }
@@ -669,7 +769,7 @@ function ModalBase({
   return (
     <div className="fixed inset-0 z-50 grid place-items-end bg-black/70 p-3 backdrop-blur sm:place-items-center" role="presentation">
       <section
-        className="max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-3xl border border-foundy-border bg-foundy-surface text-foundy-foreground shadow-2xl"
+        className="foundy-modal-panel max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-3xl border border-foundy-border bg-foundy-surface text-foundy-foreground shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-titulo"
@@ -810,7 +910,7 @@ function ModalAcaoRapida({
     <ModalBase titulo="Nova ação rápida" subtitulo="Selecione o fluxo ideal para seu caso." onClose={onClose}>
       <div className="grid gap-3 p-4">
         <button
-          className="inline-flex h-14 items-center justify-between rounded-2xl bg-red-500 px-4 text-left text-white"
+          className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-red-500 px-4 text-left text-white"
           type="button"
           onClick={onEscolherPerdi}
         >
@@ -821,7 +921,7 @@ function ModalAcaoRapida({
           <MapPin size={18} aria-hidden="true" />
         </button>
         <button
-          className="inline-flex h-14 items-center justify-between rounded-2xl bg-foundy-green px-4 text-left text-slate-950"
+          className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-foundy-green px-4 text-left text-slate-950"
           type="button"
           onClick={onEscolherAchei}
         >
@@ -833,6 +933,104 @@ function ModalAcaoRapida({
         </button>
       </div>
     </ModalBase>
+  )
+}
+
+function ModalManifestoSeguranca({ onClose }: { onClose: () => void }) {
+  return (
+    <ModalBase
+      titulo="Segurança em Primeiro Lugar"
+      subtitulo="O Protocolo Foundy para encontros físicos mais seguros."
+      onClose={onClose}
+    >
+      <div className="grid gap-4 p-4">
+        <div className="rounded-3xl border border-foundy-green/30 bg-foundy-green/10 p-4">
+          <p className="text-sm font-black text-foundy-green">No Foundy, nossa missão é conectar honestidade com alívio.</p>
+          <p className="mt-2 text-sm leading-6 text-foundy-muted">
+            Para que essa história tenha um final feliz, a sua segurança física é nossa prioridade absoluta. Ao recuperar ou devolver
+            um objeto, siga estas regras antes de combinar qualquer encontro.
+          </p>
+        </div>
+
+        <div className="grid gap-3">
+          <ProtocoloItem
+            titulo="Encontros apenas em locais públicos"
+            texto="Nunca marque a entrega em residências, locais isolados ou estacionamentos vazios. Escolha locais movimentados, iluminados e com segurança, como estações de metrô, praças de alimentação de shoppings ou em frente a bases policiais."
+          />
+          <ProtocoloItem
+            titulo="Use a luz do dia"
+            texto="Marque os encontros exclusivamente em horários de grande movimento, entre 8h e 18h. Nunca faça entregas à noite."
+          />
+          <ProtocoloItem
+            titulo="Faça a Pergunta Secreta"
+            texto="Se você perdeu o item, comprove que ele é seu antes do encontro. Se for um celular, diga o papel de parede; se for uma carteira, cite os documentos dentro; se for uma chave, descreva o chaveiro."
+          />
+          <ProtocoloItem
+            titulo="Não vá sozinho"
+            texto="Sempre que possível, leve um amigo ou familiar com você no momento da entrega."
+          />
+        </div>
+
+        <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm leading-6 text-foundy-foreground">
+          <AlertTriangle className="mb-2" size={18} aria-hidden="true" />
+          O Foundy é uma ponte digital de comunicação e comunidade. Não nos responsabilizamos pelos encontros físicos; por isso,
+          siga o protocolo e cuide de si mesmo e do próximo.
+        </div>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalTermosLgpd({ onClose }: { onClose: () => void }) {
+  return (
+    <ModalBase
+      titulo="Termos de Uso e Política de Privacidade"
+      subtitulo="Resumo operacional em conformidade com a LGPD."
+      onClose={onClose}
+    >
+      <div className="grid gap-4 p-4">
+        <ProtocoloItem
+          titulo="1. Escopo do Serviço"
+          texto="O Foundy é uma plataforma de comunidade que atua exclusivamente como um mural digital para aproximar pessoas que perderam ou encontraram objetos. O Foundy não armazena, não inspeciona, não transporta e não garante o estado de conservação de nenhum item postado pelos usuários."
+        />
+        <ProtocoloItem
+          titulo="2. Proteção de Dados e Privacidade (LGPD)"
+          texto="A plataforma nunca exibe endereço residencial ou localização exata de onde o item foi encontrado. O mapa mostra apenas um raio aproximado ou ponto de referência público da região. Ao enviar uma imagem, o usuário declara ciência de que ela ficará visível publicamente para identificação do item."
+        />
+        <ProtocoloItem
+          titulo="Uso de imagens"
+          texto="É proibido postar fotos que exibam rostos de pessoas, dados bancários explícitos, documentos completos, telefones, e-mails reais ou qualquer informação sensível que possa expor terceiros."
+        />
+        <div className="rounded-3xl border border-red-400/30 bg-red-500/10 p-4">
+          <p className="text-sm font-black text-foundy-foreground">3. Conduta Proibida e Golpes</p>
+          <ul className="mt-3 grid gap-2 text-sm leading-6 text-foundy-muted">
+            <li>Cobrar valores abusivos ou “taxas de resgate” como condição para a devolução de um item.</li>
+            <li>Exigir pagamentos antecipados, PIX, transferências, frete ou recompensa antes da entrega física do objeto.</li>
+            <li>Anunciar itens ilegais, armas, medicamentos ou substâncias ilícitas.</li>
+          </ul>
+        </div>
+        <div className="rounded-2xl border border-foundy-border bg-foundy-background p-4 text-sm leading-6 text-foundy-muted">
+          O descumprimento dessas regras pode resultar no banimento imediato e permanente da conta. Em caso de suspeita de crime,
+          dados de acesso podem ser compartilhados com autoridades competentes conforme a legislação aplicável.
+        </div>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ProtocoloItem({ titulo, texto }: { titulo: string; texto: string }) {
+  return (
+    <article className="rounded-2xl border border-foundy-border bg-foundy-background/70 p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-foundy-blue/15 text-foundy-blue">
+          <ShieldCheck size={16} aria-hidden="true" />
+        </span>
+        <div>
+          <h3 className="text-sm font-black">{titulo}</h3>
+          <p className="mt-1 text-sm leading-6 text-foundy-muted">{texto}</p>
+        </div>
+      </div>
+    </article>
   )
 }
 
