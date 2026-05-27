@@ -28,7 +28,7 @@ export default function MapaInterativo({
   onSelecionarItem: (item: ItemAchado) => void
 }) {
   const centro: [number, number] = itemSelecionado
-    ?[itemSelecionado.latitude_aproximada, itemSelecionado.longitude_aproximada]
+    ? [itemSelecionado.latitude_aproximada, itemSelecionado.longitude_aproximada]
     : CENTRO_PADRAO
 
   return (
@@ -44,8 +44,8 @@ export default function MapaInterativo({
           eventHandlers={{ click: () => onSelecionarItem(item) }}
           key={item.id}
           pathOptions={{
-            color: itemSelecionado?.id === item.id ?'#facc15' : '#2dd4bf',
-            fillColor: itemSelecionado?.id === item.id ?'#facc15' : '#2dd4bf',
+            color: itemSelecionado?.id === item.id ? '#facc15' : '#3b82f6',
+            fillColor: itemSelecionado?.id === item.id ? '#facc15' : '#22c55e',
             fillOpacity: 0.18,
             weight: 2,
           }}
@@ -54,7 +54,7 @@ export default function MapaInterativo({
           <Popup>
             <strong>{item.titulo}</strong>
             <br />
-            {item.local_descricao ?'Local aproximado'}
+            {item.local_descricao ?? 'Local aproximado'}
           </Popup>
         </Circle>
       ))}
