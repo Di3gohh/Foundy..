@@ -8,13 +8,21 @@ import {
   CheckCircle2,
   FileText,
   Flag,
+  KeyRound,
   LocateFixed,
   MapPin,
+  PackageSearch,
+  PawPrint,
   Plus,
   Search,
   Send,
   ShieldCheck,
+  Shirt,
+  SlidersHorizontal,
   Sparkles,
+  Smartphone,
+  type LucideIcon,
+  Wallet,
   X,
 } from 'lucide-react'
 import type { ChangeEvent, ReactNode } from 'react'
@@ -55,7 +63,7 @@ const MapaPerimetro = dynamic(() => import('@/components/MapaPerimetro'), {
   ),
 })
 
-type ModalAtivo = 'auth' | 'acao' | 'item' | 'perdi' | 'desafio' | 'aguardando' | 'chat' | 'seguranca' | 'termos' | null
+type ModalAtivo = 'auth' | 'acao' | 'item' | 'perdi' | 'desafio' | 'aguardando' | 'chat' | 'busca' | 'seguranca' | 'termos' | null
 type CategoriaItem = ItemAchado['categoria']
 type GeoPoint = { latitude: number; longitude: number }
 
@@ -128,12 +136,12 @@ const itensDemonstracao: ItemAchado[] = [
   },
 ]
 
-const categorias: Record<CategoriaItem, { label: string; icon: string }> = {
-  chaves: { label: 'Chaves', icon: '🔑' },
-  eletronicos: { label: 'Celulares', icon: '📱' },
-  documentos: { label: 'Documentos', icon: '👛' },
-  vestuario: { label: 'Vestuário', icon: '🧥' },
-  outros: { label: 'Pets e outros', icon: '🐶' },
+const categorias: Record<CategoriaItem, { label: string; description: string; Icon: LucideIcon }> = {
+  chaves: { label: 'Chaves', description: 'Chaves, tags, chaveiros e controles pequenos.', Icon: KeyRound },
+  eletronicos: { label: 'Celulares', description: 'Celulares, fones, tablets e acessórios digitais.', Icon: Smartphone },
+  documentos: { label: 'Documentos', description: 'Carteiras, cartões, RG, CPF e credenciais.', Icon: Wallet },
+  vestuario: { label: 'Vestuário', description: 'Jaquetas, bonés, mochilas e peças pessoais.', Icon: Shirt },
+  outros: { label: 'Pets e outros', description: 'Pets, coleiras, brinquedos e objetos diversos.', Icon: PawPrint },
 }
 
 const pilaresSeguranca = [
@@ -154,7 +162,7 @@ const pilaresSeguranca = [
   },
 ]
 
-const supportEmail = 'Foundy.company@gmail.com'
+const supportEmail = 'foundy.company@gmail.com'
 const supportMailto = `mailto:${supportEmail}?subject=Contato%20Foundy`
 
 function haversineDistanceMeters(from: GeoPoint, to: GeoPoint) {
@@ -394,6 +402,15 @@ export default function Home() {
 
           <div className="flex items-center gap-2">
             <button
+              className="foundy-search-pill foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-green/40 bg-foundy-green/10 px-3 text-sm font-black text-foundy-green transition hover:border-foundy-green"
+              type="button"
+              aria-label="Abrir busca e filtros do Radar"
+              onClick={() => setModalAtivo('busca')}
+            >
+              <Search size={16} aria-hidden="true" />
+              <span className="hidden sm:inline">Buscar</span>
+            </button>
+            <button
               className="foundy-pressable hidden h-10 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60 md:inline-flex"
               type="button"
               onClick={() => setModalAtivo('seguranca')}
@@ -459,44 +476,22 @@ export default function Home() {
           </div>
 
           <div className="relative">
-            <div className="foundy-floating-search absolute inset-x-3 top-3 z-20 rounded-2xl border border-foundy-border bg-foundy-surface/95 p-3 shadow-xl backdrop-blur">
-              <div className="mb-2 flex items-center gap-2 rounded-xl border border-foundy-border bg-foundy-background px-3">
-                <Search size={16} aria-hidden="true" className="text-foundy-muted" />
-                <input
-                  className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-foundy-muted"
-                  placeholder="Buscar por título, descrição ou hashtag..."
-                  value={buscaTexto}
-                  onChange={(event) => setBuscaTexto(event.target.value)}
-                />
-              </div>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                <button
-                  className={`foundy-pressable rounded-full border px-3 py-1.5 text-xs font-bold ${
-                    filtro === 'todos'
-                      ? 'border-foundy-blue bg-foundy-blue text-white'
-                      : 'border-foundy-border text-foundy-foreground'
-                  }`}
-                  type="button"
-                  onClick={() => setFiltro('todos')}
-                >
-                  Todos
-                </button>
-                {(Object.keys(categorias) as CategoriaItem[]).map((categoria) => (
-                  <button
-                    className={`foundy-pressable rounded-full border px-3 py-1.5 text-xs font-bold ${
-                      filtro === categoria
-                        ? 'border-foundy-blue bg-foundy-blue text-white'
-                        : 'border-foundy-border text-foundy-foreground'
-                    }`}
-                    key={categoria}
-                    type="button"
-                    onClick={() => setFiltro(categoria)}
-                  >
-                    <span className="mr-1">{categorias[categoria].icon}</span>
-                    {categorias[categoria].label}
-                  </button>
-                ))}
-              </div>
+            <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex justify-center sm:justify-start">
+              <button
+                className="foundy-search-orb foundy-pressable pointer-events-auto inline-flex min-h-14 max-w-full items-center gap-3 rounded-2xl border border-foundy-green/35 bg-foundy-surface/95 px-4 py-3 text-left shadow-xl backdrop-blur"
+                type="button"
+                onClick={() => setModalAtivo('busca')}
+              >
+                <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-foundy-green text-slate-950 shadow-lg shadow-foundy-green/20">
+                  <Search size={19} aria-hidden="true" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-black text-foundy-foreground">Buscar no Radar</span>
+                  <span className="block truncate text-xs text-foundy-muted">
+                    {itensFiltrados.length} de {itens.length} itens visíveis
+                  </span>
+                </span>
+              </button>
             </div>
 
             <MapaInterativo itens={itensFiltrados} itemSelecionado={itemSelecionado} onSelecionarItem={setItemSelecionado} />
@@ -535,47 +530,40 @@ export default function Home() {
           ))}
         </section>
 
-        <section className="rounded-3xl border border-foundy-border bg-foundy-surface/85 p-4 shadow-xl shadow-black/10" aria-label="Busca inteligente Foundy">
-          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
-            <div>
-              <p className="foundy-eyebrow text-xs font-semibold text-foundy-green">Busca inteligente</p>
-              <h2 className="mt-1 text-xl font-black tracking-tight">Ache mais rápido com a lupa Foundy</h2>
-              <p className="mt-1 text-sm text-foundy-muted">
-                Pesquise por nome, descrição, categoria ou hashtags automáticas. O filtro também atualiza o mapa em tempo real.
-              </p>
+        <section className="foundy-search-summary rounded-3xl border border-foundy-border bg-foundy-surface/85 p-4 shadow-xl shadow-black/10" aria-label="Lupa de busca Foundy">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-foundy-green text-slate-950 shadow-lg shadow-foundy-green/20">
+                <Search size={21} aria-hidden="true" />
+              </span>
+              <div>
+                <p className="foundy-eyebrow text-xs font-semibold text-foundy-green">Lupa Foundy</p>
+                <h2 className="mt-1 text-xl font-black tracking-tight">Pesquisa e filtros em uma aba limpa</h2>
+                <p className="mt-1 text-sm text-foundy-muted">
+                  Abra a lupa para buscar por texto, categoria, descrição ou hashtags automáticas sem poluir o mapa.
+                </p>
+              </div>
             </div>
-            <div className="rounded-full border border-foundy-border bg-foundy-background px-4 py-2 text-sm font-bold text-foundy-muted">
-              {itensFiltrados.length} de {itens.length} itens visíveis
-            </div>
+            <button
+              className="foundy-pressable inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-foundy-green px-5 text-sm font-black text-slate-950 shadow-lg shadow-foundy-green/15"
+              type="button"
+              onClick={() => setModalAtivo('busca')}
+            >
+              <Search size={18} aria-hidden="true" />
+              Abrir busca
+            </button>
           </div>
-          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]">
-            <label className="flex min-h-12 items-center gap-3 rounded-2xl border border-foundy-border bg-foundy-background px-4">
-              <Search size={18} aria-hidden="true" className="text-foundy-green" />
-              <span className="sr-only">Pesquisar itens achados</span>
-              <input
-                className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-foundy-muted"
-                placeholder="Ex.: chave azul, carteira preta, celular, documento..."
-                value={buscaTexto}
-                onChange={(event) => setBuscaTexto(event.target.value)}
-              />
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="foundy-pressable inline-flex h-12 items-center justify-center rounded-2xl bg-foundy-green px-5 text-sm font-black text-slate-950"
-                type="button"
-                onClick={() => mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-              >
-                Ver resultado no mapa
-              </button>
-              <button
-                className="foundy-pressable inline-flex h-12 items-center justify-center rounded-2xl border border-foundy-border px-5 text-sm font-bold"
-                type="button"
-                onClick={limparBusca}
-              >
-                Limpar busca
+          {(buscaTexto || filtro !== 'todos') ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-foundy-green/25 bg-foundy-green/10 p-3 text-sm text-foundy-muted">
+              <span className="font-black text-foundy-green">Filtro ativo:</span>
+              <span>{buscaTexto ? `"${buscaTexto}"` : 'sem texto'}</span>
+              <span>•</span>
+              <span>{filtro === 'todos' ? 'todas as categorias' : categorias[filtro].label}</span>
+              <button className="ml-auto rounded-xl border border-foundy-border px-3 py-1 text-xs font-bold" type="button" onClick={limparBusca}>
+                Limpar
               </button>
             </div>
-          </div>
+          ) : null}
         </section>
 
         <section className="grid gap-4" aria-label="Feed de itens achados">
@@ -596,65 +584,69 @@ export default function Home() {
             </button>
           </div>
 
-          {itensFiltrados.map((item) => (
-            <article className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface" key={item.id}>
-              <div className="relative h-52 overflow-hidden">
-                <img
-                  src={item.imagem_url ?? placeholdersPorCategoria[item.categoria]}
-                  alt={`Imagem do item ${item.titulo}`}
-                  className="h-full w-full object-cover"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-                <div className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs font-bold text-white">
-                  {categorias[item.categoria].icon} {categorias[item.categoria].label}
-                </div>
-                <div className="absolute bottom-3 right-3 rounded-full bg-foundy-blue px-3 py-1 text-xs font-bold text-white">
-                  {formatDistance(getDistance(item))}
-                </div>
-              </div>
-
-              <div className="grid gap-3 p-4 sm:p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black">{item.titulo}</h3>
-                    <p className="text-sm text-foundy-muted">{item.local_descricao ?? 'Local aproximado protegido'}</p>
+          {itensFiltrados.map((item) => {
+            const CategoriaIcon = categorias[item.categoria].Icon
+            return (
+              <article className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface" key={item.id}>
+                <div className="relative h-52 overflow-hidden">
+                  <img
+                    src={item.imagem_url ?? placeholdersPorCategoria[item.categoria]}
+                    alt={`Imagem do item ${item.titulo}`}
+                    className="h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+                  <div className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs font-bold text-white">
+                    <CategoriaIcon size={14} aria-hidden="true" />
+                    {categorias[item.categoria].label}
                   </div>
-                  {item.premium_ativo ? (
-                    <span className="rounded-full bg-foundy-green/20 px-3 py-1 text-xs font-bold text-foundy-green">Boost ativo</span>
+                  <div className="absolute bottom-3 right-3 rounded-full bg-foundy-blue px-3 py-1 text-xs font-bold text-white">
+                    {formatDistance(getDistance(item))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 p-4 sm:p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black">{item.titulo}</h3>
+                      <p className="text-sm text-foundy-muted">{item.local_descricao ?? 'Local aproximado protegido'}</p>
+                    </div>
+                    {item.premium_ativo ? (
+                      <span className="rounded-full bg-foundy-green/20 px-3 py-1 text-xs font-bold text-foundy-green">Boost ativo</span>
+                    ) : null}
+                  </div>
+
+                  <p className="text-sm leading-6 text-foundy-muted">{item.descricao}</p>
+
+                  {(item.hashtags_ia ?? []).length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {(item.hashtags_ia ?? []).map((tag) => (
+                        <span className="rounded-full bg-foundy-blue/15 px-3 py-1 text-xs font-semibold text-foundy-blue" key={`${item.id}-${tag}`}>
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
                   ) : null}
-                </div>
 
-                <p className="text-sm leading-6 text-foundy-muted">{item.descricao}</p>
-
-                {(item.hashtags_ia ?? []).length > 0 ? (
                   <div className="flex flex-wrap gap-2">
-                    {(item.hashtags_ia ?? []).map((tag) => (
-                      <span className="rounded-full bg-foundy-blue/15 px-3 py-1 text-xs font-semibold text-foundy-blue" key={`${item.id}-${tag}`}>
-                        {tag}
-                      </span>
-                    ))}
+                    <button
+                      className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950 transition hover:brightness-110"
+                      type="button"
+                      onClick={() => iniciarFluxoReivindicacao(item)}
+                    >
+                      É meu
+                    </button>
+                    <button
+                      className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold text-foundy-foreground"
+                      type="button"
+                      onClick={() => selecionarItemNoMapa(item)}
+                    >
+                      Ver no mapa
+                    </button>
                   </div>
-                ) : null}
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950 transition hover:brightness-110"
-                    type="button"
-                    onClick={() => iniciarFluxoReivindicacao(item)}
-                  >
-                    É meu
-                  </button>
-                  <button
-                    className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold text-foundy-foreground"
-                    type="button"
-                    onClick={() => selecionarItemNoMapa(item)}
-                  >
-                    Ver no mapa
-                  </button>
                 </div>
-              </div>
-            </article>
-          ))}
+              </article>
+            )
+          })}
 
           {!carregando && itensFiltrados.length === 0 ? (
             <article className="rounded-3xl border border-dashed border-foundy-border bg-foundy-surface/70 p-6 text-center">
@@ -805,6 +797,20 @@ export default function Home() {
         />
       ) : null}
 
+      {modalAtivo === 'busca' ? (
+        <ModalBuscaFiltros
+          buscaTexto={buscaTexto}
+          filtro={filtro}
+          itensVisiveis={itensFiltrados.length}
+          totalItens={itens.length}
+          onBuscaTextoChange={setBuscaTexto}
+          onFiltroChange={setFiltro}
+          onLimpar={limparBusca}
+          onVerMapa={() => mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          onClose={() => setModalAtivo(null)}
+        />
+      ) : null}
+
       {modalAtivo === 'seguranca' ? <ModalManifestoSeguranca onClose={() => setModalAtivo(null)} /> : null}
 
       {modalAtivo === 'termos' ? <ModalTermosLgpd onClose={() => setModalAtivo(null)} /> : null}
@@ -850,6 +856,131 @@ function ModalBase({
         {children}
       </section>
     </div>
+  )
+}
+
+function ModalBuscaFiltros({
+  buscaTexto,
+  filtro,
+  itensVisiveis,
+  totalItens,
+  onBuscaTextoChange,
+  onFiltroChange,
+  onLimpar,
+  onVerMapa,
+  onClose,
+}: {
+  buscaTexto: string
+  filtro: CategoriaItem | 'todos'
+  itensVisiveis: number
+  totalItens: number
+  onBuscaTextoChange: (value: string) => void
+  onFiltroChange: (value: CategoriaItem | 'todos') => void
+  onLimpar: () => void
+  onVerMapa: () => void
+  onClose: () => void
+}) {
+  const filtros = Object.keys(categorias) as CategoriaItem[]
+
+  function verResultadoNoMapa() {
+    onClose()
+    window.setTimeout(onVerMapa, 80)
+  }
+
+  return (
+    <ModalBase
+      titulo="Buscar no Radar"
+      subtitulo="Use texto e categorias visuais para encontrar itens sem poluir o mapa."
+      onClose={onClose}
+    >
+      <div className="grid gap-5 p-4">
+        <label className="foundy-search-input flex min-h-14 items-center gap-3 rounded-3xl border border-foundy-green/35 bg-foundy-background px-4 shadow-inner">
+          <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-foundy-green text-slate-950">
+            <Search size={19} aria-hidden="true" />
+          </span>
+          <span className="sr-only">Pesquisar itens achados</span>
+          <input
+            autoFocus
+            className="h-14 w-full bg-transparent text-sm font-semibold outline-none placeholder:text-foundy-muted"
+            placeholder="Ex.: chave azul, carteira preta, celular, documento..."
+            value={buscaTexto}
+            onChange={(event) => onBuscaTextoChange(event.target.value)}
+          />
+        </label>
+
+        <div className="rounded-3xl border border-foundy-border bg-foundy-background/60 p-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-black">Filtros visuais</p>
+              <p className="text-xs text-foundy-muted">Escolha uma categoria ou mantenha tudo no radar.</p>
+            </div>
+            <span className="grid size-9 place-items-center rounded-2xl bg-foundy-blue/15 text-foundy-blue">
+              <SlidersHorizontal size={17} aria-hidden="true" />
+            </span>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              className={`foundy-filter-card foundy-pressable rounded-3xl border p-4 text-left ${
+                filtro === 'todos'
+                  ? 'border-foundy-green bg-foundy-green/15 shadow-lg shadow-foundy-green/10'
+                  : 'border-foundy-border bg-foundy-surface/70'
+              }`}
+              type="button"
+              onClick={() => onFiltroChange('todos')}
+            >
+              <span className="mb-3 grid size-11 place-items-center rounded-2xl bg-foundy-blue/15 text-foundy-blue">
+                <PackageSearch size={21} aria-hidden="true" />
+              </span>
+              <span className="block text-sm font-black">Todos os itens</span>
+              <span className="mt-1 block text-xs leading-5 text-foundy-muted">Mostra tudo que está disponível no Radar.</span>
+            </button>
+
+            {filtros.map((categoria) => {
+              const CategoriaIcon = categorias[categoria].Icon
+              const ativo = filtro === categoria
+              return (
+                <button
+                  className={`foundy-filter-card foundy-pressable rounded-3xl border p-4 text-left ${
+                    ativo
+                      ? 'border-foundy-green bg-foundy-green/15 shadow-lg shadow-foundy-green/10'
+                      : 'border-foundy-border bg-foundy-surface/70'
+                  }`}
+                  key={categoria}
+                  type="button"
+                  onClick={() => onFiltroChange(categoria)}
+                >
+                  <span className="mb-3 grid size-11 place-items-center rounded-2xl bg-foundy-green/15 text-foundy-green">
+                    <CategoriaIcon size={21} aria-hidden="true" />
+                  </span>
+                  <span className="block text-sm font-black">{categorias[categoria].label}</span>
+                  <span className="mt-1 block text-xs leading-5 text-foundy-muted">{categorias[categoria].description}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-black text-foundy-green">{itensVisiveis} de {totalItens} itens visíveis</p>
+            <p className="text-xs text-foundy-muted">Os filtros atualizam o feed e os pontos do mapa imediatamente.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="foundy-pressable h-11 rounded-2xl border border-foundy-border px-4 text-sm font-bold" type="button" onClick={onLimpar}>
+              Limpar
+            </button>
+            <button
+              className="foundy-pressable h-11 rounded-2xl bg-foundy-green px-4 text-sm font-black text-slate-950"
+              type="button"
+              onClick={verResultadoNoMapa}
+            >
+              Ver no mapa
+            </button>
+          </div>
+        </div>
+      </div>
+    </ModalBase>
   )
 }
 
