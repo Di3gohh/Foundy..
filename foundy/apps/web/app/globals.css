@@ -164,12 +164,50 @@ select:focus-visible {
   box-shadow: 0 0 0 6px color-mix(in srgb, var(--foundy-green) 18%, transparent);
 }
 
-.foundy-floating-search,
+.foundy-search-orb,
+.foundy-search-summary,
+.foundy-filter-card,
 .foundy-trust-card,
 .foundy-item-card {
   box-shadow:
     0 24px 80px rgb(0 0 0 / 0.22),
     inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+.foundy-search-orb,
+.foundy-search-pill,
+.foundy-search-input,
+.foundy-filter-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.foundy-search-orb::after,
+.foundy-search-summary::after,
+.foundy-filter-card::after {
+  content: '';
+  position: absolute;
+  inset: -40% -20% auto auto;
+  width: 120px;
+  height: 120px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foundy-green) 22%, transparent);
+  filter: blur(28px);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.foundy-search-orb {
+  animation: foundySearchFloat 4.5s ease-in-out infinite;
+}
+
+.foundy-filter-card {
+  min-height: 150px;
+}
+
+.foundy-filter-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .foundy-trust-card {
@@ -223,6 +261,16 @@ select:focus-visible {
   to {
     transform: translateY(0) scale(1);
     opacity: 1;
+  }
+}
+
+@keyframes foundySearchFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
   }
 }
 
