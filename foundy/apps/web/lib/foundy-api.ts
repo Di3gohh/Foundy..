@@ -210,7 +210,11 @@ export async function denunciarExtorsao(salaChatId: string, usuarioId: string, m
     await parseError(response, 'Não foi possível enviar a denúncia de extorsão.')
   }
 
-  return (await response.json()) as { mensagem: string }
+  return (await response.json()) as {
+    mensagem: string
+    email_verificado?: boolean
+    login_liberado?: boolean
+  }
 }
 
 export async function criarAlertaPerdido(payload: {
