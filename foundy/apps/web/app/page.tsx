@@ -154,6 +154,9 @@ const pilaresSeguranca = [
   },
 ]
 
+const supportEmail = 'Foundy.company@gmail.com'
+const supportMailto = `mailto:${supportEmail}?subject=Contato%20Foundy`
+
 function haversineDistanceMeters(from: GeoPoint, to: GeoPoint) {
   const earthRadius = 6_371_000
   const dLat = ((to.latitude - from.latitude) * Math.PI) / 180
@@ -279,6 +282,11 @@ export default function Home() {
 
   function abrirAcaoRapida() {
     setModalAtivo('acao')
+  }
+
+  function limparBusca() {
+    setBuscaTexto('')
+    setFiltro('todos')
   }
 
   function selecionarItemNoMapa(item: ItemAchado) {
@@ -527,6 +535,49 @@ export default function Home() {
           ))}
         </section>
 
+        <section className="rounded-3xl border border-foundy-border bg-foundy-surface/85 p-4 shadow-xl shadow-black/10" aria-label="Busca inteligente Foundy">
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+            <div>
+              <p className="foundy-eyebrow text-xs font-semibold text-foundy-green">Busca inteligente</p>
+              <h2 className="mt-1 text-xl font-black tracking-tight">Ache mais rápido com a lupa Foundy</h2>
+              <p className="mt-1 text-sm text-foundy-muted">
+                Pesquise por nome, descrição, categoria ou hashtags automáticas. O filtro também atualiza o mapa em tempo real.
+              </p>
+            </div>
+            <div className="rounded-full border border-foundy-border bg-foundy-background px-4 py-2 text-sm font-bold text-foundy-muted">
+              {itensFiltrados.length} de {itens.length} itens visíveis
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]">
+            <label className="flex min-h-12 items-center gap-3 rounded-2xl border border-foundy-border bg-foundy-background px-4">
+              <Search size={18} aria-hidden="true" className="text-foundy-green" />
+              <span className="sr-only">Pesquisar itens achados</span>
+              <input
+                className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-foundy-muted"
+                placeholder="Ex.: chave azul, carteira preta, celular, documento..."
+                value={buscaTexto}
+                onChange={(event) => setBuscaTexto(event.target.value)}
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="foundy-pressable inline-flex h-12 items-center justify-center rounded-2xl bg-foundy-green px-5 text-sm font-black text-slate-950"
+                type="button"
+                onClick={() => mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              >
+                Ver resultado no mapa
+              </button>
+              <button
+                className="foundy-pressable inline-flex h-12 items-center justify-center rounded-2xl border border-foundy-border px-5 text-sm font-bold"
+                type="button"
+                onClick={limparBusca}
+              >
+                Limpar busca
+              </button>
+            </div>
+          </div>
+        </section>
+
         <section className="grid gap-4" aria-label="Feed de itens achados">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -625,6 +676,12 @@ export default function Home() {
               <p className="text-sm font-black text-foundy-green">Foundy protege pessoas antes de proteger objetos.</p>
               <p className="mt-1 text-sm text-foundy-muted">
                 Leia o protocolo de encontro seguro e os termos de privacidade antes de combinar qualquer devolução.
+              </p>
+              <p className="mt-2 text-sm text-foundy-muted">
+                Dúvidas, sugestões ou suporte: {' '}
+                <a className="font-bold text-foundy-green underline-offset-4 hover:underline" href={supportMailto}>
+                  {supportEmail}
+                </a>
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -767,9 +824,9 @@ function ModalBase({
   onClose: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-black/70 p-3 backdrop-blur sm:place-items-center" role="presentation">
+    <div className="fixed inset-0 z-[9999] grid place-items-end bg-black/70 p-3 backdrop-blur sm:place-items-center" role="presentation">
       <section
-        className="foundy-modal-panel max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-3xl border border-foundy-border bg-foundy-surface text-foundy-foreground shadow-2xl"
+        className="foundy-modal-panel relative z-[10000] max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-3xl border border-foundy-border bg-foundy-surface text-foundy-foreground shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-titulo"
@@ -807,7 +864,9 @@ function ModalAutenticacao({
   const [nome, setNome] = useState('')
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
-  const [mensagem, setMensagem] = useState('Confirme seu e-mail para publicar, criar alertas e usar o chat.')
+  const [mensagem, setMensagem] = useState(
+    'Confirme seu e-mail para publicar, criar alertas e usar o chat. Em ambiente sem SMTP, a conta é liberada automaticamente para testes.',
+  )
   const [enviando, setEnviando] = useState(false)
 
   async function enviar() {
@@ -816,6 +875,11 @@ function ModalAutenticacao({
       if (modo === 'cadastrar') {
         const resposta = await cadastrarUsuario({ nome, email, senha })
         setMensagem(resposta.mensagem)
+        if (resposta.login_liberado) {
+          const login = await entrarUsuario({ email, senha })
+          setMensagem(`Conta criada, verificada e sessão iniciada. Badge atual: ${login.badge_publica}.`)
+          onSessaoAtiva(login)
+        }
       } else {
         const resposta = await entrarUsuario({ email, senha })
         setMensagem(`Sessão iniciada. Badge atual: ${resposta.badge_publica}.`)
@@ -890,7 +954,7 @@ function ModalAutenticacao({
           disabled={enviando}
           onClick={() => void enviar()}
         >
-          {enviando ? 'Enviando...' : modo === 'entrar' ? 'Entrar com e-mail verificado' : 'Criar conta e receber verificação'}
+          {enviando ? 'Enviando...' : modo === 'entrar' ? 'Entrar com e-mail verificado' : 'Criar conta e continuar'}
         </button>
       </div>
     </ModalBase>
@@ -976,6 +1040,12 @@ function ModalManifestoSeguranca({ onClose }: { onClose: () => void }) {
           O Foundy é uma ponte digital de comunicação e comunidade. Não nos responsabilizamos pelos encontros físicos; por isso,
           siga o protocolo e cuide de si mesmo e do próximo.
         </div>
+        <a
+          className="foundy-pressable inline-flex min-h-11 items-center justify-center rounded-2xl border border-foundy-border px-4 text-center text-sm font-black text-foundy-green"
+          href={supportMailto}
+        >
+          Falar com o suporte: {supportEmail}
+        </a>
       </div>
     </ModalBase>
   )
@@ -1012,6 +1082,13 @@ function ModalTermosLgpd({ onClose }: { onClose: () => void }) {
         <div className="rounded-2xl border border-foundy-border bg-foundy-background p-4 text-sm leading-6 text-foundy-muted">
           O descumprimento dessas regras pode resultar no banimento imediato e permanente da conta. Em caso de suspeita de crime,
           dados de acesso podem ser compartilhados com autoridades competentes conforme a legislação aplicável.
+        </div>
+        <div className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm leading-6 text-foundy-muted">
+          Para dúvidas, sugestões, solicitações de privacidade ou suporte, fale com a equipe Foundy pelo e-mail{' '}
+          <a className="font-black text-foundy-green underline-offset-4 hover:underline" href={supportMailto}>
+            {supportEmail}
+          </a>
+          .
         </div>
       </div>
     </ModalBase>
@@ -1486,18 +1563,22 @@ function ModalChatSeguro({
         {denunciarDisponivel ? (
           <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={onDenunciar}>
             <Flag size={16} aria-hidden="true" />
-            Denunciar Extorsão
+            Denunciar Extorsão e avisar suporte
           </button>
         ) : (
           <div className="rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">
-            O botão de denúncia é ativado automaticamente se houver tentativa de cobrança indevida.
+            O botão de denúncia é ativado automaticamente se houver tentativa de cobrança indevida. O suporte oficial é {supportEmail}.
           </div>
         )}
 
         <div className="rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-3 text-sm text-yellow-100">
           <AlertTriangle className="mb-2" size={16} aria-hidden="true" />
-          Se alguém pedir PIX, pagamento, cobrança ou resgate para devolver o item, denuncie imediatamente.
+          Se alguém pedir PIX, pagamento, cobrança ou resgate para devolver o item, denuncie imediatamente. A denúncia é registrada
+          no Foundy e o suporte é avisado por e-mail quando o SMTP está configurado.
         </div>
+        <a className="text-center text-sm font-bold text-foundy-green underline-offset-4 hover:underline" href={supportMailto}>
+          Contato para dúvidas e sugestões: {supportEmail}
+        </a>
       </div>
     </ModalBase>
   )
