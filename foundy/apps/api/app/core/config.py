@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_key: str | None = Field(default=None, alias="SUPABASE_KEY")
+    supabase_secret_key: str | None = Field(default=None, alias="SUPABASE_SECRET_KEY")
+    supabase_service_role_key: str | None = Field(default=None, alias="SUPABASE_SERVICE_ROLE_KEY")
     jwt_secret_key: str = Field(alias="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     access_token_expire_minutes: int = Field(default=10080, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
@@ -28,6 +30,11 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @property
+    def supabase_backend_key(self) -> str | None:
+        """Prefer server-only keys and keep SUPABASE_KEY as a compatibility fallback."""
+        return self.supabase_secret_key or self.supabase_service_role_key or self.supabase_key
 
 
 @lru_cache
