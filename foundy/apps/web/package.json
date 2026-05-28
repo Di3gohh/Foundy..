@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@types/leaflet": "^1.9.16",
+    "@supabase/supabase-js": "^2.48.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
     "next": "^16.1.5",

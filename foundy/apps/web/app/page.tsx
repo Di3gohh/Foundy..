@@ -2,47 +2,62 @@
 
 import dynamic from 'next/dynamic'
 import {
-  AlertTriangle,
+  Ban,
   Bell,
   Camera,
   CheckCircle2,
-  FileText,
   Flag,
+  Inbox,
   KeyRound,
   LocateFixed,
+  LogOut,
   MapPin,
-  PackageSearch,
+  MessageCircle,
   PawPrint,
   Plus,
   Search,
   Send,
   ShieldCheck,
   Shirt,
-  SlidersHorizontal,
   Sparkles,
+  Star,
   Smartphone,
-  type LucideIcon,
+  Trash2,
+  UserRound,
   Wallet,
   X,
+  type LucideIcon,
 } from 'lucide-react'
 import type { ChangeEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
+  adminArquivarItem,
+  adminBanirUsuario,
+  atualizarPerfil,
   buscarItensAchadosProximos,
+  buscarPainelAdmin,
+  buscarPainelUsuario,
   cadastrarItemAchado,
   cadastrarUsuario,
+  confirmarDevolucaoComAvaliacao,
   criarAlertaPerdido,
   denunciarExtorsao,
   entrarUsuario,
   enviarMensagemChat,
   enviarRespostaDesafio,
   listarMensagensChat,
+  listarNotificacoes,
+  marcarNotificacaoLida,
   processarImagemComPrivacidade,
   validarReivindicacao,
+  type ChatSummary,
   type FoundySession,
   type ItemAchado,
+  type ItemCategory,
   type MensagemChat,
+  type NotificationItem,
+  type UserDashboard,
 } from '@/lib/foundy-api'
 
 const MapaInterativo = dynamic(() => import('@/components/MapaInterativo'), {
@@ -58,32 +73,62 @@ const MapaPerimetro = dynamic(() => import('@/components/MapaPerimetro'), {
   ssr: false,
   loading: () => (
     <div className="grid min-h-[260px] place-items-center rounded-2xl border border-white/10 bg-slate-900 text-sm text-slate-300">
-      Carregando mapa do perímetro...
+      Carregando mapa do perimetro...
     </div>
   ),
 })
 
-type ModalAtivo = 'auth' | 'acao' | 'item' | 'perdi' | 'desafio' | 'aguardando' | 'chat' | 'busca' | 'seguranca' | 'termos' | null
-type CategoriaItem = ItemAchado['categoria']
+type ModalAtivo =
+  | 'auth'
+  | 'acao'
+  | 'item'
+  | 'perdi'
+  | 'desafio'
+  | 'aguardando'
+  | 'chat'
+  | 'busca'
+  | 'seguranca'
+  | 'termos'
+  | 'perfil'
+  | 'notificacoes'
+  | 'chats'
+  | 'onboarding'
+  | 'admin'
+  | null
+
 type GeoPoint = { latitude: number; longitude: number }
+type MainTab = 'radar' | 'usuario' | 'seguranca'
 
 const defaultPoint: GeoPoint = { latitude: -23.55052, longitude: -46.633308 }
+const sessionStorageKey = 'foundy-session-v2'
+const firstVisitKey = 'foundy-first-visit-v2'
+const onboardingKey = 'foundy-onboarding-v2'
+const supportEmail = 'foundy.company@gmail.com'
+const supportMailto = `mailto:${supportEmail}?subject=Contato%20Foundy`
 
-const placeholdersPorCategoria: Record<CategoriaItem, string> = {
+const placeholdersPorCategoria: Record<ItemCategory, string> = {
   chaves: 'https://images.unsplash.com/photo-1592887102811-2f9f67f7f05b?auto=format&fit=crop&w=1200&q=80',
   eletronicos: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=1200&q=80',
   documentos: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=1200&q=80',
   vestuario: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=1200&q=80',
-  outros: 'https://images.unsplash.com/photo-1528962914676-134849a727f0?auto=format&fit=crop&w=1200&q=80',
+  outros: 'https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=1200&q=80',
+}
+
+const categorias: Record<ItemCategory, { label: string; description: string; Icon: LucideIcon }> = {
+  chaves: { label: 'Chaves', description: 'Chaves, chaveiros e controles pequenos.', Icon: KeyRound },
+  eletronicos: { label: 'Celulares', description: 'Celulares, fones e acessorios digitais.', Icon: Smartphone },
+  documentos: { label: 'Documentos', description: 'Carteiras, RG, CPF e credenciais.', Icon: Wallet },
+  vestuario: { label: 'Vestuario', description: 'Jaquetas, bones, mochilas e pecas pessoais.', Icon: Shirt },
+  outros: { label: 'Pets e outros', description: 'Pets, coleiras, brinquedos e objetos diversos.', Icon: PawPrint },
 }
 
 const itensDemonstracao: ItemAchado[] = [
   {
     id: 'demo-1',
     titulo: 'Chave Yale com chaveiro azul',
-    descricao: 'Encontrada perto da saída principal da estação. O endereço exato foi mascarado por segurança.',
+    descricao: 'Encontrada perto da saida principal da estacao. O endereco exato foi mascarado.',
     categoria: 'chaves',
-    local_descricao: 'Região da estação central',
+    local_descricao: 'Regiao da estacao central',
     latitude_aproximada: -23.5489,
     longitude_aproximada: -46.6372,
     raio_mascara_metros: 500,
@@ -91,19 +136,17 @@ const itensDemonstracao: ItemAchado[] = [
     imagem_url: placeholdersPorCategoria.chaves,
     status: 'publicado',
     criado_em: new Date().toISOString(),
-    desafio_pergunta: 'Qual detalhe só o dono saberia informar?',
+    desafio_pergunta: 'Qual detalhe so o dono saberia informar?',
     chat_desbloqueado: false,
     tags_ia: ['chaveyale', 'fitaazul'],
     hashtags_ia: ['#ChaveYale', '#FitaAzul'],
-    premium_ativo: true,
-    premium_expira_em: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
   },
   {
     id: 'demo-2',
-    titulo: 'Carteira preta com documento parcial',
-    descricao: 'Encontrada em cafeteria local. Dados pessoais foram automaticamente ocultados.',
+    titulo: 'Carteira preta com documento protegido',
+    descricao: 'Encontrada em cafeteria local. Dados pessoais devem ser descritos apenas pelo verdadeiro dono.',
     categoria: 'documentos',
-    local_descricao: 'Próximo à praça principal',
+    local_descricao: 'Proximo a praca principal',
     latitude_aproximada: -23.5533,
     longitude_aproximada: -46.6312,
     raio_mascara_metros: 500,
@@ -111,59 +154,12 @@ const itensDemonstracao: ItemAchado[] = [
     imagem_url: placeholdersPorCategoria.documentos,
     status: 'publicado',
     criado_em: new Date().toISOString(),
-    desafio_pergunta: 'Que figurinha havia dentro da carteira?',
+    desafio_pergunta: 'Que documento havia dentro da carteira?',
     chat_desbloqueado: false,
     tags_ia: ['documentopessoal', 'carteirapreta'],
     hashtags_ia: ['#DocumentoPessoal', '#CarteiraPreta'],
   },
-  {
-    id: 'demo-3',
-    titulo: 'Fone bluetooth no banco público',
-    descricao: 'Estojo branco encontrado na área comercial. A prova de posse é exigida antes de liberar o chat.',
-    categoria: 'eletronicos',
-    local_descricao: 'Área comercial do bairro',
-    latitude_aproximada: -23.5561,
-    longitude_aproximada: -46.642,
-    raio_mascara_metros: 500,
-    distancia_metros: 1430,
-    imagem_url: placeholdersPorCategoria.eletronicos,
-    status: 'publicado',
-    criado_em: new Date().toISOString(),
-    desafio_pergunta: 'Qual marca está gravada no estojo?',
-    chat_desbloqueado: false,
-    tags_ia: ['celular'],
-    hashtags_ia: ['#Celular'],
-  },
 ]
-
-const categorias: Record<CategoriaItem, { label: string; description: string; Icon: LucideIcon }> = {
-  chaves: { label: 'Chaves', description: 'Chaves, tags, chaveiros e controles pequenos.', Icon: KeyRound },
-  eletronicos: { label: 'Celulares', description: 'Celulares, fones, tablets e acessórios digitais.', Icon: Smartphone },
-  documentos: { label: 'Documentos', description: 'Carteiras, cartões, RG, CPF e credenciais.', Icon: Wallet },
-  vestuario: { label: 'Vestuário', description: 'Jaquetas, bonés, mochilas e peças pessoais.', Icon: Shirt },
-  outros: { label: 'Pets e outros', description: 'Pets, coleiras, brinquedos e objetos diversos.', Icon: PawPrint },
-}
-
-const pilaresSeguranca = [
-  {
-    titulo: 'Local público',
-    texto: 'Entregas sempre em pontos movimentados, iluminados e com segurança.',
-    selo: 'Sem endereço exato',
-  },
-  {
-    titulo: 'Luz do dia',
-    texto: 'Encontros recomendados entre 8h e 18h, quando há mais movimento.',
-    selo: 'Horário seguro',
-  },
-  {
-    titulo: 'Pergunta secreta',
-    texto: 'O chat só avança quando o dono comprova um detalhe oculto do item.',
-    selo: 'Prova de posse',
-  },
-]
-
-const supportEmail = 'foundy.company@gmail.com'
-const supportMailto = `mailto:${supportEmail}?subject=Contato%20Foundy`
 
 function haversineDistanceMeters(from: GeoPoint, to: GeoPoint) {
   const earthRadius = 6_371_000
@@ -171,36 +167,173 @@ function haversineDistanceMeters(from: GeoPoint, to: GeoPoint) {
   const dLon = ((to.longitude - from.longitude) * Math.PI) / 180
   const lat1 = (from.latitude * Math.PI) / 180
   const lat2 = (to.latitude * Math.PI) / 180
-
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  return earthRadius * c
+  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 function formatDistance(meters: number | null) {
-  if (meters === null || Number.isNaN(meters)) return 'Distância protegida'
+  if (meters === null || Number.isNaN(meters)) return 'Distancia protegida'
   if (meters < 1000) return `${Math.round(meters)} m`
   return `${(meters / 1000).toFixed(1).replace('.', ',')} km`
 }
 
+function isAdmin(session: FoundySession | null) {
+  return session?.is_admin === 'true'
+}
+
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<MainTab>('radar')
   const [itens, setItens] = useState<ItemAchado[]>([])
   const [itemSelecionado, setItemSelecionado] = useState<ItemAchado | null>(null)
   const [modalAtivo, setModalAtivo] = useState<ModalAtivo>(null)
   const [mensagemSistema, setMensagemSistema] = useState('Carregando o Radar local...')
   const [carregando, setCarregando] = useState(true)
-  const [filtro, setFiltro] = useState<CategoriaItem | 'todos'>('todos')
+  const [filtro, setFiltro] = useState<ItemCategory | 'todos'>('todos')
   const [buscaTexto, setBuscaTexto] = useState('')
   const [localUsuario, setLocalUsuario] = useState<GeoPoint | null>(null)
   const [sessao, setSessao] = useState<FoundySession | null>(null)
+  const [painel, setPainel] = useState<UserDashboard | null>(null)
+  const [notificacoes, setNotificacoes] = useState<NotificationItem[]>([])
   const [respostaDesafio, setRespostaDesafio] = useState('')
   const [reivindicacaoId, setReivindicacaoId] = useState<string | null>(null)
   const [salaChatId, setSalaChatId] = useState<string | null>(null)
+  const [chatAtual, setChatAtual] = useState<ChatSummary | null>(null)
   const [mensagensChat, setMensagensChat] = useState<MensagemChat[]>([])
   const [mensagemChatAtual, setMensagemChatAtual] = useState('')
   const [chatCarregando, setChatCarregando] = useState(false)
   const [denunciaDisponivel, setDenunciaDisponivel] = useState(false)
+  const [adminData, setAdminData] = useState<{ usuarios: unknown[]; itens: ItemAchado[]; moderacao: unknown[] } | null>(null)
   const mapSectionRef = useRef<HTMLDivElement | null>(null)
+
+  const carregarPainel = useCallback(async (session: FoundySession) => {
+    try {
+      const dados = await buscarPainelUsuario(session.usuario_id)
+      setPainel(dados)
+      setNotificacoes(dados.notificacoes)
+      setSessao((atual) => (atual ? { ...atual, ...dados.usuario } : dados.usuario))
+      localStorage.setItem(sessionStorageKey, JSON.stringify({ ...session, ...dados.usuario }))
+    } catch (error) {
+      setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel carregar sua area.')
+    }
+  }, [])
+
+  const carregarItens = useCallback(async (latitude?: number, longitude?: number, selecionarPrimeiro = true) => {
+    setCarregando(true)
+    setMensagemSistema('Atualizando itens com privacidade geografica ativa...')
+    try {
+      const dados = await buscarItensAchadosProximos({ latitude, longitude })
+      const lista = dados.length > 0 ? dados : itensDemonstracao
+      setItens(lista)
+      setItemSelecionado((atual) => (selecionarPrimeiro ? atual ?? lista[0] ?? null : atual))
+      setMensagemSistema(dados.length > 0 ? 'Radar atualizado com sucesso.' : 'Mostrando exemplos ate surgirem itens reais na regiao.')
+    } catch (error) {
+      setItens(itensDemonstracao)
+      setItemSelecionado(itensDemonstracao[0])
+      setMensagemSistema(error instanceof Error ? error.message : 'Servidor indisponivel. Mostrando modo demonstracao.')
+    } finally {
+      setCarregando(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void carregarItens()
+    const stored = localStorage.getItem(sessionStorageKey)
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as FoundySession
+        setSessao(parsed)
+        void carregarPainel(parsed)
+      } catch {
+        localStorage.removeItem(sessionStorageKey)
+      }
+      return
+    }
+
+    if (!localStorage.getItem(firstVisitKey)) {
+      localStorage.setItem(firstVisitKey, '1')
+      setModalAtivo('auth')
+    }
+  }, [carregarItens, carregarPainel])
+
+  useEffect(() => {
+    if (!sessao) return
+    const timer = window.setInterval(() => {
+      void carregarPainel(sessao)
+      void listarNotificacoes(sessao.usuario_id).then(setNotificacoes).catch(() => undefined)
+    }, 7000)
+    return () => window.clearInterval(timer)
+  }, [carregarPainel, sessao])
+
+  useEffect(() => {
+    if (modalAtivo !== 'chat' || !salaChatId || !sessao) return
+    let active = true
+
+    async function refreshChat() {
+      if (!salaChatId || !sessao) return
+      setChatCarregando(true)
+      try {
+        const dados = await listarMensagensChat(salaChatId, sessao.usuario_id)
+        if (!active) return
+        setMensagensChat(dados)
+        setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
+      } catch (error) {
+        setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel carregar o chat seguro.')
+      } finally {
+        if (active) setChatCarregando(false)
+      }
+    }
+
+    void refreshChat()
+    const timer = window.setInterval(refreshChat, 2500)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [modalAtivo, salaChatId, sessao])
+
+  useEffect(() => {
+    if (modalAtivo !== 'chat' || !salaChatId || !sessao) return
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    if (!supabaseUrl || !supabaseKey) return
+
+    let cleanup: (() => void) | undefined
+    let cancelled = false
+
+    async function startRealtime() {
+      try {
+        const { createClient } = await import('@supabase/supabase-js')
+        if (cancelled || !salaChatId || !sessao) return
+        const client = createClient(supabaseUrl, supabaseKey)
+        const channel = client
+          .channel(`foundy-chat-${salaChatId}`)
+          .on(
+            'postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'mensagens_chat', filter: `sala_chat_id=eq.${salaChatId}` },
+            () => {
+              void listarMensagensChat(salaChatId, sessao.usuario_id).then((dados) => {
+                setMensagensChat(dados)
+                setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
+              })
+              void carregarPainel(sessao)
+            },
+          )
+          .subscribe()
+
+        cleanup = () => {
+          void client.removeChannel(channel)
+        }
+      } catch {
+        setMensagemSistema('Tempo real indisponivel agora. Mantivemos atualizacao automatica por seguranca.')
+      }
+    }
+
+    void startRealtime()
+    return () => {
+      cancelled = true
+      cleanup?.()
+    }
+  }, [carregarPainel, modalAtivo, salaChatId, sessao])
 
   const itensFiltrados = useMemo(() => {
     const termo = buscaTexto.trim().toLowerCase()
@@ -208,144 +341,98 @@ export default function Home() {
       const bateFiltro = filtro === 'todos' || item.categoria === filtro
       if (!bateFiltro) return false
       if (!termo) return true
-      const base = `${item.titulo} ${item.descricao} ${(item.hashtags_ia ?? []).join(' ')}`.toLowerCase()
-      return base.includes(termo)
+      return `${item.titulo} ${item.descricao} ${(item.hashtags_ia ?? []).join(' ')}`.toLowerCase().includes(termo)
     })
   }, [buscaTexto, filtro, itens])
 
-  const getDistance = useCallback(
-    (item: ItemAchado) => {
-      if (item.distancia_metros !== null) return item.distancia_metros
-      if (!localUsuario) return null
-      return haversineDistanceMeters(localUsuario, {
-        latitude: item.latitude_aproximada,
-        longitude: item.longitude_aproximada,
-      })
-    },
-    [localUsuario],
-  )
+  const unreadCount = notificacoes.filter((item) => !item.lida_em).length
 
-  const carregarItens = useCallback(
-    async (latitude?: number, longitude?: number) => {
-      setCarregando(true)
-      setMensagemSistema('Atualizando itens com privacidade geográfica ativa...')
-      try {
-        const dados = await buscarItensAchadosProximos({ latitude, longitude })
-        const lista = dados
-        setItens(lista)
-        setItemSelecionado(lista[0] ?? null)
-        setMensagemSistema(dados.length > 0 ? 'Radar atualizado com sucesso.' : 'Sem novos itens na sua região por enquanto.')
-      } catch (error) {
-        setItens([])
-        setItemSelecionado(null)
-        setMensagemSistema(
-          error instanceof Error
-            ? error.message
-            : 'Servidor indisponível no momento. Tente atualizar novamente em instantes.',
-        )
-      } finally {
-        setCarregando(false)
-      }
-    },
-    [],
-  )
+  function salvarSessao(novaSessao: FoundySession) {
+    setSessao(novaSessao)
+    localStorage.setItem(sessionStorageKey, JSON.stringify(novaSessao))
+    setMensagemSistema(`Login confirmado. Bem-vindo, ${novaSessao.nome}.`)
+    void carregarPainel(novaSessao)
+    if (!localStorage.getItem(`${onboardingKey}-${novaSessao.usuario_id}`)) {
+      setModalAtivo('onboarding')
+    } else {
+      setModalAtivo(null)
+    }
+  }
 
-  const obterMeuLocal = useCallback(() => {
+  function sair() {
+    localStorage.removeItem(sessionStorageKey)
+    setSessao(null)
+    setPainel(null)
+    setNotificacoes([])
+    setModalAtivo('auth')
+  }
+
+  function obterMeuLocal() {
     if (!navigator.geolocation) {
-      setMensagemSistema('Este navegador não suporta geolocalização.')
+      setMensagemSistema('Este navegador nao suporta geolocalizacao.')
       return
     }
-
-    setMensagemSistema('Solicitando sua posição para calcular distâncias exatas...')
+    setMensagemSistema('Solicitando sua posicao aproximada...')
     navigator.geolocation.getCurrentPosition(
       (posicao) => {
         const ponto = { latitude: posicao.coords.latitude, longitude: posicao.coords.longitude }
         setLocalUsuario(ponto)
-        void carregarItens(ponto.latitude, ponto.longitude)
+        setItemSelecionado(null)
+        mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        void carregarItens(ponto.latitude, ponto.longitude, false)
       },
-      () => {
-        setMensagemSistema('Não foi possível acessar sua localização. Mantivemos a busca regional padrão.')
-      },
+      () => setMensagemSistema('Nao foi possivel acessar sua localizacao. Mantivemos a busca regional padrao.'),
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
     )
-  }, [carregarItens])
-
-  useEffect(() => {
-    void carregarItens()
-  }, [carregarItens])
-
-  useEffect(() => {
-    if (modalAtivo !== 'chat' || !salaChatId || !sessao) return
-    setChatCarregando(true)
-    void listarMensagensChat(salaChatId, sessao.usuario_id)
-      .then((dados) => {
-        setMensagensChat(dados)
-        setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
-      })
-      .catch((error) => {
-        setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível carregar o chat seguro.')
-      })
-      .finally(() => setChatCarregando(false))
-  }, [modalAtivo, salaChatId, sessao])
-
-  function abrirAcaoRapida() {
-    setModalAtivo('acao')
   }
 
-  function limparBusca() {
-    setBuscaTexto('')
-    setFiltro('todos')
+  function getDistance(item: ItemAchado) {
+    if (item.distancia_metros !== null) return item.distancia_metros
+    if (!localUsuario) return null
+    return haversineDistanceMeters(localUsuario, {
+      latitude: item.latitude_aproximada,
+      longitude: item.longitude_aproximada,
+    })
+  }
+
+  function requireSession(nextModal: ModalAtivo, message: string) {
+    if (!sessao) {
+      setMensagemSistema(message)
+      setModalAtivo('auth')
+      return false
+    }
+    setModalAtivo(nextModal)
+    return true
   }
 
   function selecionarItemNoMapa(item: ItemAchado) {
     setItemSelecionado(item)
+    setActiveTab('radar')
     setMensagemSistema(`Mapa focado em ${item.titulo}.`)
     mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  function iniciarFluxoReivindicacao(item: ItemAchado) {
-    if (!sessao) {
-      setMensagemSistema('Você pode navegar livremente, mas para reivindicar um item é preciso login com e-mail verificado.')
-      setModalAtivo('auth')
-      return
-    }
-    setItemSelecionado(item)
-    setRespostaDesafio('')
-    setReivindicacaoId(null)
-    setModalAtivo('desafio')
-  }
-
   async function confirmarRespostaDesafio() {
-    if (!sessao || !itemSelecionado) {
-      setModalAtivo('auth')
-      return
-    }
+    if (!sessao || !itemSelecionado) return
     if (respostaDesafio.trim().length < 2) {
-      setMensagemSistema('Digite uma resposta válida para o desafio do dono.')
+      setMensagemSistema('Digite uma resposta valida para o desafio.')
       return
     }
-
     try {
       const resultado = await enviarRespostaDesafio(itemSelecionado.id, sessao.usuario_id, respostaDesafio.trim())
       setReivindicacaoId(resultado.reivindicacao_id ?? null)
       setMensagemSistema(resultado.mensagem)
       setModalAtivo('aguardando')
+      void carregarPainel(sessao)
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a resposta.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel enviar a resposta.')
     }
   }
 
   async function validarRespostaComoEncontrador(aprovada: boolean) {
-    if (!sessao || !reivindicacaoId) {
-      setMensagemSistema('Reivindicação inválida para validação.')
-      return
-    }
-
+    if (!sessao || !reivindicacaoId) return
     try {
-      const resultado = await validarReivindicacao(reivindicacaoId, {
-        aprovada,
-        encontrador_usuario_id: sessao.usuario_id,
-      })
+      const resultado = await validarReivindicacao(reivindicacaoId, { aprovada, encontrador_usuario_id: sessao.usuario_id })
       setMensagemSistema(resultado.mensagem)
       if (resultado.chat_desbloqueado && resultado.sala_chat_id) {
         setSalaChatId(resultado.sala_chat_id)
@@ -353,504 +440,380 @@ export default function Home() {
       } else {
         setModalAtivo(null)
       }
+      void carregarPainel(sessao)
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível validar a resposta.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel validar a resposta.')
     }
+  }
+
+  async function abrirChat(chat: ChatSummary) {
+    setSalaChatId(chat.id)
+    setChatAtual(chat)
+    const item = itens.find((found) => found.id === chat.item_achado_id)
+    if (item) setItemSelecionado(item)
+    setModalAtivo('chat')
   }
 
   async function enviarMensagemNoChat() {
-    if (!sessao || !salaChatId || !mensagemChatAtual.trim()) return
+    if (!sessao || !salaChatId) {
+      setMensagemSistema('Abra uma conversa valida antes de enviar mensagem.')
+      return
+    }
+    const text = mensagemChatAtual.trim()
+    if (!text) {
+      setMensagemSistema('Digite uma mensagem antes de enviar.')
+      return
+    }
     try {
-      const enviada = await enviarMensagemChat(salaChatId, sessao.usuario_id, mensagemChatAtual.trim())
+      const enviada = await enviarMensagemChat(salaChatId, sessao.usuario_id, text)
       setMensagensChat((atuais) => [...atuais, enviada])
       setMensagemChatAtual('')
-      if (enviada.denunciar_extorsao_visivel) {
-        setDenunciaDisponivel(true)
-      }
+      setDenunciaDisponivel((atual) => atual || enviada.denunciar_extorsao_visivel)
+      void carregarPainel(sessao)
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a mensagem.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel enviar a mensagem.')
     }
   }
 
-  async function denunciarNoChat() {
-    if (!sessao || !salaChatId) return
-    try {
-      const resposta = await denunciarExtorsao(
-        salaChatId,
-        sessao.usuario_id,
-        'Solicitação indevida de pagamento para devolução do item.',
-      )
-      setMensagemSistema(resposta.mensagem)
-    } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a denúncia.')
+  async function clicarNotificacao(notificacao: NotificationItem) {
+    if (!sessao) return
+    if (!notificacao.lida_em) {
+      void marcarNotificacaoLida(notificacao.id, sessao.usuario_id).then(() => carregarPainel(sessao))
+    }
+    if (notificacao.sala_chat_id) {
+      setSalaChatId(notificacao.sala_chat_id)
+      setChatAtual(painel?.chats.find((chat) => chat.id === notificacao.sala_chat_id) ?? null)
+      setModalAtivo('chat')
+      return
+    }
+    if (notificacao.reivindicacao_id) {
+      setReivindicacaoId(notificacao.reivindicacao_id)
+      setModalAtivo('aguardando')
+      return
+    }
+    if (notificacao.item_achado_id) {
+      const item = itens.find((found) => found.id === notificacao.item_achado_id)
+      if (item) selecionarItemNoMapa(item)
+      setModalAtivo(null)
     }
   }
 
   return (
     <main className="foundy-app-shell min-h-dvh bg-foundy-background text-foundy-foreground">
-      <nav className="sticky top-0 z-40 border-b border-foundy-border bg-foundy-surface/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8">
-          <button className="foundy-pressable flex items-center gap-3 text-left" type="button" onClick={() => void carregarItens()}>
+      <nav className="sticky top-0 z-40 border-b border-foundy-border bg-foundy-surface/92 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-3 py-3 sm:px-6 lg:px-8">
+          <button className="foundy-pressable flex items-center gap-3 text-left" type="button" onClick={() => setActiveTab('radar')}>
             <span className="foundy-logo-mark grid size-10 place-items-center rounded-2xl bg-foundy-blue text-white shadow-lg shadow-foundy-blue/30">
               <MapPin size={22} aria-hidden="true" />
             </span>
             <span>
               <span className="block text-base font-black tracking-wide">FOUNDY.</span>
-              <span className="hidden text-xs text-foundy-muted sm:block">Limpo, Seguro e Rápido</span>
+              <span className="hidden text-xs text-foundy-muted sm:block">Limpo, seguro e rapido</span>
             </span>
           </button>
 
+          <div className="hidden rounded-2xl border border-foundy-border bg-foundy-background/70 p-1 md:flex">
+            {(['radar', 'usuario', 'seguranca'] as MainTab[]).map((tab) => (
+              <button
+                className={`rounded-xl px-4 py-2 text-sm font-black ${activeTab === tab ? 'bg-foundy-blue text-white' : 'text-foundy-muted'}`}
+                key={tab}
+                type="button"
+                onClick={() => (tab === 'usuario' && !sessao ? setModalAtivo('auth') : setActiveTab(tab))}
+              >
+                {tab === 'radar' ? 'Radar' : tab === 'usuario' ? 'Minha pagina' : 'Seguranca'}
+              </button>
+            ))}
+          </div>
+
           <div className="flex items-center gap-2">
-            <button
-              className="foundy-search-pill foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-green/40 bg-foundy-green/10 px-3 text-sm font-black text-foundy-green transition hover:border-foundy-green"
-              type="button"
-              aria-label="Abrir busca e filtros do Radar"
-              onClick={() => setModalAtivo('busca')}
-            >
-              <Search size={16} aria-hidden="true" />
-              <span className="hidden sm:inline">Buscar</span>
+            <button className="foundy-icon-button" type="button" aria-label="Buscar" onClick={() => setModalAtivo('busca')}>
+              <Search size={18} />
             </button>
-            <button
-              className="foundy-pressable hidden h-10 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60 md:inline-flex"
-              type="button"
-              onClick={() => setModalAtivo('seguranca')}
-            >
-              <ShieldCheck size={16} aria-hidden="true" />
-              Segurança
+            <button className="foundy-icon-button relative" type="button" aria-label="Notificacoes" onClick={() => requireSession('notificacoes', 'Entre para ver suas notificacoes.')}>
+              <Bell size={18} />
+              {unreadCount > 0 ? <span className="foundy-badge">{unreadCount}</span> : null}
             </button>
-            <button
-              className="foundy-pressable hidden h-10 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60 md:inline-flex"
-              type="button"
-              onClick={() => setModalAtivo('termos')}
-            >
-              <FileText size={16} aria-hidden="true" />
-              LGPD
-            </button>
-            <button
-              className="foundy-pressable hidden h-10 items-center rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60 sm:inline-flex"
-              type="button"
-              onClick={() => setModalAtivo('auth')}
-            >
-              {sessao ? `Olá, ${sessao.nome}` : 'Entrar'}
-            </button>
-            <button
-              className="foundy-pressable grid size-10 place-items-center rounded-xl border border-foundy-border text-foundy-foreground transition hover:border-foundy-blue/60"
-              type="button"
-              aria-label="Notificações"
-              onClick={() => setMensagemSistema('As notificações de perímetro ativo aparecerão aqui em tempo real.')}
-            >
-              <Bell size={18} aria-hidden="true" />
+            <button className="foundy-user-button foundy-pressable inline-flex min-h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-black" type="button" onClick={() => (sessao ? setModalAtivo('perfil') : setModalAtivo('auth'))}>
+              {sessao?.foto_url ? <img src={sessao.foto_url} alt="" className="size-7 rounded-full object-cover" /> : <UserRound size={18} />}
+              <span className="max-w-[90px] truncate sm:max-w-[160px]">{sessao ? sessao.nome : 'Entrar'}</span>
             </button>
           </div>
         </div>
       </nav>
 
-      <section className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <div ref={mapSectionRef} className="foundy-hero-panel relative overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface p-4 shadow-2xl shadow-black/25 sm:p-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="max-w-3xl">
-              <p className="foundy-eyebrow text-sm font-semibold text-foundy-blue">O Radar hiperlocal</p>
-              <h1 className="mt-1 text-3xl font-black tracking-tight sm:text-5xl">O que se perdeu, volta com segurança.</h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-foundy-muted sm:text-base">
-                Encontre itens por região aproximada, converse só após prova de posse e siga um protocolo claro para devoluções em locais públicos.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="foundy-pressable inline-flex h-11 items-center gap-2 rounded-xl bg-foundy-blue px-4 text-sm font-black text-white shadow-lg shadow-foundy-blue/25"
-                type="button"
-                onClick={abrirAcaoRapida}
-              >
-                <Plus size={17} aria-hidden="true" />
-                Começar agora
-              </button>
-              <button
-                className="foundy-pressable inline-flex h-11 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60"
-                type="button"
-                onClick={obterMeuLocal}
-              >
-                <LocateFixed size={17} aria-hidden="true" />
-                Perto de mim
-              </button>
-            </div>
-          </div>
-
-          <div className="relative">
-            <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex justify-center sm:justify-start">
-              <button
-                className="foundy-search-orb foundy-pressable pointer-events-auto inline-flex min-h-14 max-w-full items-center gap-3 rounded-2xl border border-foundy-green/35 bg-foundy-surface/95 px-4 py-3 text-left shadow-xl backdrop-blur"
-                type="button"
-                onClick={() => setModalAtivo('busca')}
-              >
-                <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-foundy-green text-slate-950 shadow-lg shadow-foundy-green/20">
-                  <Search size={19} aria-hidden="true" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-black text-foundy-foreground">Buscar no Radar</span>
-                  <span className="block truncate text-xs text-foundy-muted">
-                    {itensFiltrados.length} de {itens.length} itens visíveis
-                  </span>
-                </span>
-              </button>
-            </div>
-
-            <MapaInterativo itens={itensFiltrados} itemSelecionado={itemSelecionado} onSelecionarItem={setItemSelecionado} />
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-foundy-border bg-foundy-background/70 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-bold">Escudo de privacidade geográfica ativo</p>
-                <p className="mt-1 text-sm text-foundy-muted">
-                  O mapa revela somente raio aproximado. Telefone, e-mail e endereço exato ficam protegidos.
-                </p>
-              </div>
-              <span className="inline-flex items-center gap-2 rounded-full bg-foundy-green/20 px-3 py-2 text-xs font-bold text-foundy-green">
-                <ShieldCheck size={15} aria-hidden="true" />
-                Segurança aplicada
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <section className="grid gap-3 md:grid-cols-3" aria-label="Pilares de segurança Foundy">
-          {pilaresSeguranca.map((pilar) => (
-            <button
-              className="foundy-trust-card foundy-pressable rounded-3xl border border-foundy-border bg-foundy-surface/80 p-4 text-left shadow-xl shadow-black/10"
-              key={pilar.titulo}
-              type="button"
-              onClick={() => setModalAtivo('seguranca')}
-            >
-              <span className="mb-3 inline-flex rounded-full bg-foundy-green/15 px-3 py-1 text-xs font-black text-foundy-green">
-                {pilar.selo}
-              </span>
-              <h2 className="text-lg font-black tracking-tight">{pilar.titulo}</h2>
-              <p className="mt-2 text-sm leading-6 text-foundy-muted">{pilar.texto}</p>
-            </button>
-          ))}
-        </section>
-
-        <section className="foundy-search-summary rounded-3xl border border-foundy-border bg-foundy-surface/85 p-4 shadow-xl shadow-black/10" aria-label="Lupa de busca Foundy">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-foundy-green text-slate-950 shadow-lg shadow-foundy-green/20">
-                <Search size={21} aria-hidden="true" />
-              </span>
-              <div>
-                <p className="foundy-eyebrow text-xs font-semibold text-foundy-green">Lupa Foundy</p>
-                <h2 className="mt-1 text-xl font-black tracking-tight">Pesquisa e filtros em uma aba limpa</h2>
-                <p className="mt-1 text-sm text-foundy-muted">
-                  Abra a lupa para buscar por texto, categoria, descrição ou hashtags automáticas sem poluir o mapa.
-                </p>
-              </div>
-            </div>
-            <button
-              className="foundy-pressable inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-foundy-green px-5 text-sm font-black text-slate-950 shadow-lg shadow-foundy-green/15"
-              type="button"
-              onClick={() => setModalAtivo('busca')}
-            >
-              <Search size={18} aria-hidden="true" />
-              Abrir busca
-            </button>
-          </div>
-          {(buscaTexto || filtro !== 'todos') ? (
-            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-foundy-green/25 bg-foundy-green/10 p-3 text-sm text-foundy-muted">
-              <span className="font-black text-foundy-green">Filtro ativo:</span>
-              <span>{buscaTexto ? `"${buscaTexto}"` : 'sem texto'}</span>
-              <span>•</span>
-              <span>{filtro === 'todos' ? 'todas as categorias' : categorias[filtro].label}</span>
-              <button className="ml-auto rounded-xl border border-foundy-border px-3 py-1 text-xs font-bold" type="button" onClick={limparBusca}>
-                Limpar
-              </button>
-            </div>
-          ) : null}
-        </section>
-
-        <section className="grid gap-4" aria-label="Feed de itens achados">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-xl font-black tracking-tight">Itens achados perto de você</h2>
-              <p className="text-sm text-foundy-muted" aria-live="polite">
-                {mensagemSistema}
-              </p>
-            </div>
-            <button
-              className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-semibold text-foundy-foreground transition hover:border-foundy-blue/60"
-              type="button"
-              onClick={() => void carregarItens(localUsuario?.latitude, localUsuario?.longitude)}
-            >
-              <Sparkles size={16} aria-hidden="true" />
-              Atualizar
-            </button>
-          </div>
-
-          {itensFiltrados.map((item) => {
-            const CategoriaIcon = categorias[item.categoria].Icon
-            return (
-              <article className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface" key={item.id}>
-                <div className="relative h-52 overflow-hidden">
-                  <img
-                    src={item.imagem_url ?? placeholdersPorCategoria[item.categoria]}
-                    alt={`Imagem do item ${item.titulo}`}
-                    className="h-full w-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-                  <div className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs font-bold text-white">
-                    <CategoriaIcon size={14} aria-hidden="true" />
-                    {categorias[item.categoria].label}
-                  </div>
-                  <div className="absolute bottom-3 right-3 rounded-full bg-foundy-blue px-3 py-1 text-xs font-bold text-white">
-                    {formatDistance(getDistance(item))}
-                  </div>
-                </div>
-
-                <div className="grid gap-3 p-4 sm:p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-lg font-black">{item.titulo}</h3>
-                      <p className="text-sm text-foundy-muted">{item.local_descricao ?? 'Local aproximado protegido'}</p>
-                    </div>
-                    {item.premium_ativo ? (
-                      <span className="rounded-full bg-foundy-green/20 px-3 py-1 text-xs font-bold text-foundy-green">Boost ativo</span>
-                    ) : null}
-                  </div>
-
-                  <p className="text-sm leading-6 text-foundy-muted">{item.descricao}</p>
-
-                  {(item.hashtags_ia ?? []).length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {(item.hashtags_ia ?? []).map((tag) => (
-                        <span className="rounded-full bg-foundy-blue/15 px-3 py-1 text-xs font-semibold text-foundy-blue" key={`${item.id}-${tag}`}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950 transition hover:brightness-110"
-                      type="button"
-                      onClick={() => iniciarFluxoReivindicacao(item)}
-                    >
-                      É meu
-                    </button>
-                    <button
-                      className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold text-foundy-foreground"
-                      type="button"
-                      onClick={() => selecionarItemNoMapa(item)}
-                    >
-                      Ver no mapa
-                    </button>
-                  </div>
-                </div>
-              </article>
-            )
-          })}
-
-          {!carregando && itensFiltrados.length === 0 ? (
-            <article className="rounded-3xl border border-dashed border-foundy-border bg-foundy-surface/70 p-6 text-center">
-              <p className="text-base font-black text-foundy-foreground">Nenhum item encontrado por enquanto</p>
-              <p className="mt-2 text-sm text-foundy-muted">
-                Assim que um novo item compatível aparecer na sua região, ele será exibido aqui com localização aproximada.
-              </p>
-            </article>
-          ) : null}
-
-          {carregando ? <p className="text-sm text-foundy-muted">Atualizando feed em tempo real...</p> : null}
-        </section>
+      <section className="mx-auto grid max-w-7xl gap-6 px-4 py-6 pb-32 sm:px-6 lg:px-8">
+        {activeTab === 'seguranca' ? (
+          <SecuritySection />
+        ) : activeTab === 'usuario' && sessao ? (
+          <UserSection painel={painel} sessao={sessao} onOpenProfile={() => setModalAtivo('perfil')} onOpenChats={() => setModalAtivo('chats')} />
+        ) : (
+          <RadarSection
+            itens={itensFiltrados}
+            totalItens={itens.length}
+            itemSelecionado={itemSelecionado}
+            localUsuario={localUsuario}
+            mapRef={mapSectionRef}
+            mensagemSistema={mensagemSistema}
+            carregando={carregando}
+            getDistance={getDistance}
+            onSelectItem={setItemSelecionado}
+            onSearch={() => setModalAtivo('busca')}
+            onNearby={obterMeuLocal}
+            onRefresh={() => void carregarItens(localUsuario?.latitude, localUsuario?.longitude)}
+            onClaim={(item) => {
+              if (!sessao) return requireSession('auth', 'Entre para reivindicar um item com seguranca.')
+              setItemSelecionado(item)
+              setRespostaDesafio('')
+              setModalAtivo('desafio')
+              return true
+            }}
+            onFocusItem={selecionarItemNoMapa}
+          />
+        )}
       </section>
 
-      <footer className="mx-auto grid max-w-7xl gap-3 px-4 pb-28 pt-2 sm:px-6 lg:px-8">
-        <div className="rounded-3xl border border-foundy-border bg-foundy-surface/75 p-4">
-          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-            <div>
-              <p className="text-sm font-black text-foundy-green">Foundy protege pessoas antes de proteger objetos.</p>
-              <p className="mt-1 text-sm text-foundy-muted">
-                Leia o protocolo de encontro seguro e os termos de privacidade antes de combinar qualquer devolução.
-              </p>
-              <p className="mt-2 text-sm text-foundy-muted">
-                Dúvidas, sugestões ou suporte: {' '}
-                <a className="font-bold text-foundy-green underline-offset-4 hover:underline" href={supportMailto}>
-                  {supportEmail}
-                </a>
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-bold"
-                type="button"
-                onClick={() => setModalAtivo('seguranca')}
-              >
-                <ShieldCheck size={16} aria-hidden="true" />
-                Manifesto de segurança
-              </button>
-              <button
-                className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-bold"
-                type="button"
-                onClick={() => setModalAtivo('termos')}
-              >
-                <FileText size={16} aria-hidden="true" />
-                Termos e LGPD
-              </button>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <Footer />
 
-      <button
-        className="foundy-fab foundy-pressable fixed bottom-6 left-1/2 z-40 grid size-16 -translate-x-1/2 place-items-center rounded-full bg-foundy-blue text-white shadow-2xl shadow-foundy-blue/35 transition hover:scale-105"
-        type="button"
-        aria-label="Abrir ações rápidas"
-        onClick={abrirAcaoRapida}
-      >
-        <Plus size={28} aria-hidden="true" />
+      <button className="foundy-fab foundy-pressable fixed bottom-6 left-1/2 z-40 grid size-16 -translate-x-1/2 place-items-center rounded-full bg-foundy-blue text-white shadow-2xl shadow-foundy-blue/35" type="button" aria-label="Abrir acoes rapidas" onClick={() => setModalAtivo('acao')}>
+        <Plus size={28} />
+      </button>
+      <button className="foundy-chat-fab foundy-pressable fixed bottom-7 right-5 z-40 grid size-14 place-items-center rounded-full bg-foundy-green text-slate-950 shadow-2xl shadow-foundy-green/30" type="button" aria-label="Abrir meus chats" onClick={() => requireSession('chats', 'Entre para acessar seus chats seguros.')}>
+        <MessageCircle size={24} />
       </button>
 
-      {modalAtivo === 'auth' ? (
-        <ModalAutenticacao
-          onClose={() => setModalAtivo(null)}
-          onSessaoAtiva={(novaSessao) => {
-            setSessao(novaSessao)
-            setMensagemSistema(`Login confirmado. Bem-vindo, ${novaSessao.nome}.`)
-            setModalAtivo(null)
-          }}
-        />
-      ) : null}
-
+      {modalAtivo === 'auth' ? <ModalAutenticacao onClose={() => setModalAtivo(null)} onSessaoAtiva={salvarSessao} /> : null}
       {modalAtivo === 'acao' ? (
         <ModalAcaoRapida
           onClose={() => setModalAtivo(null)}
-          onEscolherAchei={() => {
-            if (!sessao) {
-              setMensagemSistema('Para publicar item achado é necessário login com e-mail verificado.')
-              setModalAtivo('auth')
-              return
-            }
-            setModalAtivo('item')
-          }}
-          onEscolherPerdi={() => {
-            if (!sessao) {
-              setMensagemSistema('Para criar perímetro de perda é necessário login com e-mail verificado.')
-              setModalAtivo('auth')
-              return
-            }
-            setModalAtivo('perdi')
-          }}
+          onEscolherAchei={() => requireSession('item', 'Para publicar item achado e necessario entrar.')}
+          onEscolherPerdi={() => requireSession('perdi', 'Para criar alerta de perda e necessario entrar.')}
         />
       ) : null}
-
-      {modalAtivo === 'item' && sessao ? (
-        <ModalItemAchado
-          sessao={sessao}
-          onClose={() => setModalAtivo(null)}
-          onPublicado={(item) => {
-            setItens((atuais) => [item, ...atuais])
-            setItemSelecionado(item)
-            setMensagemSistema('Item publicado com segurança. O desafio oculto foi salvo.')
-            setModalAtivo(null)
-          }}
-        />
-      ) : null}
-
-      {modalAtivo === 'perdi' && sessao ? (
-        <ModalPerdiAlgo
-          sessao={sessao}
-          pontoInicial={localUsuario ?? defaultPoint}
-          onClose={() => setModalAtivo(null)}
-          onCriado={(mensagem) => {
-            setMensagemSistema(mensagem)
-            setModalAtivo(null)
-          }}
-        />
-      ) : null}
-
-      {modalAtivo === 'desafio' && itemSelecionado ? (
-        <ModalDesafio
-          item={itemSelecionado}
-          resposta={respostaDesafio}
-          onRespostaChange={setRespostaDesafio}
-          onConfirmar={() => void confirmarRespostaDesafio()}
-          onClose={() => setModalAtivo(null)}
-        />
-      ) : null}
-
-      {modalAtivo === 'aguardando' ? (
-        <ModalAguardandoValidacao
-          reivindicacaoId={reivindicacaoId}
-          onClose={() => setModalAtivo(null)}
-          onValidar={(aprovada) => void validarRespostaComoEncontrador(aprovada)}
-        />
-      ) : null}
-
-      {modalAtivo === 'chat' && itemSelecionado ? (
+      {modalAtivo === 'item' && sessao ? <ModalItemAchado sessao={sessao} onClose={() => setModalAtivo(null)} onPublicado={(item) => { setItens((atuais) => [item, ...atuais]); setItemSelecionado(item); setModalAtivo(null); void carregarPainel(sessao) }} /> : null}
+      {modalAtivo === 'perdi' && sessao ? <ModalPerdiAlgo sessao={sessao} pontoInicial={localUsuario ?? defaultPoint} onClose={() => setModalAtivo(null)} onCriado={(mensagem) => { setMensagemSistema(mensagem); setModalAtivo(null); void carregarPainel(sessao) }} /> : null}
+      {modalAtivo === 'desafio' && itemSelecionado ? <ModalDesafio item={itemSelecionado} resposta={respostaDesafio} onRespostaChange={setRespostaDesafio} onConfirmar={() => void confirmarRespostaDesafio()} onClose={() => setModalAtivo(null)} /> : null}
+      {modalAtivo === 'aguardando' ? <ModalAguardandoValidacao reivindicacaoId={reivindicacaoId} onClose={() => setModalAtivo(null)} onValidar={(aprovada) => void validarRespostaComoEncontrador(aprovada)} /> : null}
+      {modalAtivo === 'chat' ? (
         <ModalChatSeguro
           item={itemSelecionado}
+          chat={chatAtual}
           chatCarregando={chatCarregando}
           mensagens={mensagensChat}
           valorAtual={mensagemChatAtual}
           onChangeValor={setMensagemChatAtual}
           onEnviar={() => void enviarMensagemNoChat()}
-          onDenunciar={() => void denunciarNoChat()}
+          onDenunciar={() => salaChatId && sessao ? void denunciarExtorsao(salaChatId, sessao.usuario_id, 'Solicitacao indevida de pagamento para devolucao do item.').then((res) => setMensagemSistema(res.mensagem)) : undefined}
           denunciarDisponivel={denunciaDisponivel}
+          podeAvaliar={Boolean(sessao && chatAtual?.dono_usuario_id === sessao.usuario_id && chatAtual.encontrador_usuario_id)}
+          onConfirmarDevolucao={(nota) => {
+            if (!sessao || !chatAtual?.encontrador_usuario_id) return
+            return confirmarDevolucaoComAvaliacao({
+              item_achado_id: chatAtual.item_achado_id,
+              encontrador_usuario_id: chatAtual.encontrador_usuario_id,
+              dono_usuario_id: sessao.usuario_id,
+              nota,
+            }).then((resposta) => {
+              setMensagemSistema(resposta.mensagem)
+              void carregarPainel(sessao)
+            })
+          }}
           onClose={() => setModalAtivo(null)}
         />
       ) : null}
-
-      {modalAtivo === 'busca' ? (
-        <ModalBuscaFiltros
-          buscaTexto={buscaTexto}
-          filtro={filtro}
-          itensVisiveis={itensFiltrados.length}
-          totalItens={itens.length}
-          onBuscaTextoChange={setBuscaTexto}
-          onFiltroChange={setFiltro}
-          onLimpar={limparBusca}
-          onVerMapa={() => mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-          onClose={() => setModalAtivo(null)}
-        />
-      ) : null}
-
+      {modalAtivo === 'busca' ? <ModalBusca filtro={filtro} buscaTexto={buscaTexto} itensVisiveis={itensFiltrados.length} totalItens={itens.length} onFiltroChange={setFiltro} onBuscaChange={setBuscaTexto} onLimpar={() => { setFiltro('todos'); setBuscaTexto('') }} onClose={() => setModalAtivo(null)} /> : null}
       {modalAtivo === 'seguranca' ? <ModalManifestoSeguranca onClose={() => setModalAtivo(null)} /> : null}
-
       {modalAtivo === 'termos' ? <ModalTermosLgpd onClose={() => setModalAtivo(null)} /> : null}
+      {modalAtivo === 'perfil' && sessao ? <ModalPerfil sessao={sessao} painel={painel} onClose={() => setModalAtivo(null)} onLogout={sair} onUpdated={salvarSessao} onOpenAdmin={isAdmin(sessao) ? async () => { const data = await buscarPainelAdmin(sessao.usuario_id); setAdminData(data); setModalAtivo('admin') } : undefined} /> : null}
+      {modalAtivo === 'notificacoes' && sessao ? <ModalNotificacoes notificacoes={notificacoes} onClose={() => setModalAtivo(null)} onOpen={(notificacao) => void clicarNotificacao(notificacao)} /> : null}
+      {modalAtivo === 'chats' && sessao ? <ModalChats chats={painel?.chats ?? []} onClose={() => setModalAtivo(null)} onOpen={(chat) => void abrirChat(chat)} /> : null}
+      {modalAtivo === 'onboarding' && sessao ? <ModalOnboarding onClose={() => { localStorage.setItem(`${onboardingKey}-${sessao.usuario_id}`, '1'); setModalAtivo(null) }} /> : null}
+      {modalAtivo === 'admin' && sessao && adminData ? <ModalAdmin data={adminData} adminId={sessao.usuario_id} onClose={() => setModalAtivo(null)} onRefresh={async () => setAdminData(await buscarPainelAdmin(sessao.usuario_id))} /> : null}
     </main>
   )
 }
 
-function ModalBase({
-  titulo,
-  subtitulo,
-  children,
-  onClose,
+function RadarSection({
+  itens,
+  totalItens,
+  itemSelecionado,
+  localUsuario,
+  mapRef,
+  mensagemSistema,
+  carregando,
+  getDistance,
+  onSelectItem,
+  onSearch,
+  onNearby,
+  onRefresh,
+  onClaim,
+  onFocusItem,
 }: {
-  titulo: string
-  subtitulo?: string
-  children: ReactNode
-  onClose: () => void
+  itens: ItemAchado[]
+  totalItens: number
+  itemSelecionado: ItemAchado | null
+  localUsuario: GeoPoint | null
+  mapRef: React.RefObject<HTMLDivElement | null>
+  mensagemSistema: string
+  carregando: boolean
+  getDistance: (item: ItemAchado) => number | null
+  onSelectItem: (item: ItemAchado) => void
+  onSearch: () => void
+  onNearby: () => void
+  onRefresh: () => void
+  onClaim: (item: ItemAchado) => void
+  onFocusItem: (item: ItemAchado) => void
 }) {
   return (
-    <div className="fixed inset-0 z-[9999] grid place-items-end bg-black/70 p-3 backdrop-blur sm:place-items-center" role="presentation">
-      <section
-        className="foundy-modal-panel relative z-[10000] max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-3xl border border-foundy-border bg-foundy-surface text-foundy-foreground shadow-2xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-titulo"
-      >
-        <header className="flex items-start justify-between gap-3 border-b border-foundy-border p-4">
+    <>
+      <div ref={mapRef} className="foundy-hero-panel relative overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface p-4 shadow-2xl shadow-black/25 sm:p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="max-w-3xl">
+            <p className="foundy-eyebrow foundy-attention text-sm font-semibold text-foundy-blue">O Radar hiperlocal</p>
+            <h1 className="mt-1 text-3xl font-black tracking-tight sm:text-5xl">O que se perdeu, volta com seguranca.</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-foundy-muted sm:text-base">
+              Encontre itens por regiao aproximada, converse apos prova de posse e combine devolucoes em locais publicos.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="foundy-pressable inline-flex h-11 items-center gap-2 rounded-xl bg-foundy-blue px-4 text-sm font-black text-white" type="button" onClick={onSearch}>
+              <Search size={17} /> Buscar
+            </button>
+            <button className="foundy-pressable inline-flex h-11 items-center gap-2 rounded-xl border border-foundy-border px-4 text-sm font-semibold" type="button" onClick={onNearby}>
+              <LocateFixed size={17} /> Perto de mim
+            </button>
+          </div>
+        </div>
+
+        <MapaInterativo itens={itens} itemSelecionado={itemSelecionado} onSelecionarItem={onSelectItem} userLocation={localUsuario} />
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-foundy-border bg-foundy-background/70 p-4">
+          <p className="text-sm text-foundy-muted" aria-live="polite">{mensagemSistema}</p>
+          <button className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-semibold" type="button" onClick={onRefresh}>
+            <Sparkles size={16} /> Atualizar
+          </button>
+        </div>
+      </div>
+
+      <section className="grid gap-4" aria-label="Feed de itens achados">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-black tracking-tight">Itens achados perto de voce</h2>
+          <span className="text-sm text-foundy-muted">{itens.length} de {totalItens}</span>
+        </div>
+        {itens.map((item) => <ItemCard item={item} key={item.id} distance={getDistance(item)} onClaim={onClaim} onFocus={onFocusItem} />)}
+        {!carregando && itens.length === 0 ? <EmptyState title="Nenhum item encontrado" text="Abra a lupa para ajustar os filtros ou crie um alerta de perda." /> : null}
+        {carregando ? <p className="text-sm text-foundy-muted">Atualizando feed...</p> : null}
+      </section>
+    </>
+  )
+}
+
+function ItemCard({ item, distance, onClaim, onFocus }: { item: ItemAchado; distance: number | null; onClaim: (item: ItemAchado) => void; onFocus: (item: ItemAchado) => void }) {
+  const CategoriaIcon = categorias[item.categoria].Icon
+  return (
+    <article className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface">
+      <div className="relative h-52 overflow-hidden">
+        <img src={item.imagem_url ?? placeholdersPorCategoria[item.categoria]} alt={`Imagem do item ${item.titulo}`} className="h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+        <div className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs font-bold text-white">
+          <CategoriaIcon size={14} /> {categorias[item.categoria].label}
+        </div>
+        <div className="absolute bottom-3 right-3 rounded-full bg-foundy-blue px-3 py-1 text-xs font-bold text-white">{formatDistance(distance)}</div>
+      </div>
+      <div className="grid gap-3 p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-black tracking-tight" id="modal-titulo">
-              {titulo}
-            </h2>
+            <h3 className="text-lg font-black">{item.titulo}</h3>
+            <p className="text-sm text-foundy-muted">{item.local_descricao ?? 'Local aproximado protegido'}</p>
+          </div>
+          {item.premium_ativo ? <span className="rounded-full bg-foundy-green/20 px-3 py-1 text-xs font-bold text-foundy-green">Boost</span> : null}
+        </div>
+        <p className="text-sm leading-6 text-foundy-muted">{item.descricao}</p>
+        <div className="flex flex-wrap gap-2">
+          {(item.hashtags_ia ?? []).map((tag) => <span className="rounded-full bg-foundy-blue/15 px-3 py-1 text-xs font-semibold text-foundy-blue" key={`${item.id}-${tag}`}>{tag}</span>)}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950" type="button" onClick={() => onClaim(item)}>E meu</button>
+          <button className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold" type="button" onClick={() => onFocus(item)}>Ver no mapa</button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function UserSection({ painel, sessao, onOpenProfile, onOpenChats }: { painel: UserDashboard | null; sessao: FoundySession; onOpenProfile: () => void; onOpenChats: () => void }) {
+  return (
+    <section className="grid gap-4">
+      <div className="foundy-hero-panel rounded-3xl border border-foundy-border bg-foundy-surface p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            {sessao.foto_url ? <img src={sessao.foto_url} alt="" className="size-16 rounded-2xl object-cover" /> : <span className="grid size-16 place-items-center rounded-2xl bg-foundy-blue/20 text-foundy-blue"><UserRound size={28} /></span>}
+            <div>
+              <p className="text-sm font-bold text-foundy-green">{sessao.badge_publica ?? sessao.nivel_perfil}</p>
+              <h1 className="text-2xl font-black">{sessao.nome}</h1>
+              <p className="text-sm text-foundy-muted">{sessao.ocupacao || 'Perfil seguro Foundy'}</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-bold" type="button" onClick={onOpenProfile}>Editar perfil</button>
+            <button className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950" type="button" onClick={onOpenChats}>Chats</button>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Metric label="Pontos de Luz" value={sessao.pontos_luz} />
+        <Metric label="Itens postados" value={String(painel?.itens_postados.length ?? 0)} />
+        <Metric label="Alertas de perda" value={String(painel?.alertas_perdidos.length ?? 0)} />
+        <Metric label="Chats seguros" value={String(painel?.chats.length ?? 0)} />
+      </div>
+      <PanelList title="Meus itens postados" empty="Voce ainda nao publicou itens achados.">
+        {(painel?.itens_postados ?? []).map((item) => <SimpleRow key={item.id} title={item.titulo} text={`${categorias[item.categoria].label} - ${item.status}`} />)}
+      </PanelList>
+      <PanelList title="Notificacoes de perdas" empty="Nenhum alerta de perda criado ainda.">
+        {(painel?.alertas_perdidos ?? []).map((alerta) => <SimpleRow key={alerta.id} title={alerta.titulo} text={alerta.status} />)}
+      </PanelList>
+    </section>
+  )
+}
+
+function SecuritySection() {
+  return (
+    <section className="grid gap-4">
+      <div className="foundy-hero-panel rounded-3xl border border-foundy-border bg-foundy-surface p-5">
+        <p className="foundy-eyebrow foundy-attention text-sm font-semibold text-foundy-green">Protocolo Foundy</p>
+        <h1 className="mt-2 text-3xl font-black">Seguranca fisica antes de qualquer encontro.</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-foundy-muted">O Foundy e uma ponte digital. Encontros devem acontecer em locais publicos, de dia, com prova de posse e preferencialmente acompanhado.</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <TrustCard title="Local publico" text="Nunca combine retirada em residencia, local isolado ou estacionamento vazio." />
+        <TrustCard title="Luz do dia" text="Marque entre 8h e 18h, em areas movimentadas e monitoradas." />
+        <TrustCard title="Sem criancas" text="O Foundy e estritamente proibido para menores de 18 anos." />
+      </div>
+    </section>
+  )
+}
+
+function Footer() {
+  return (
+    <footer className="mx-auto max-w-7xl px-4 pb-28 sm:px-6 lg:px-8">
+      <div className="rounded-3xl border border-foundy-border bg-foundy-surface/75 p-4">
+        <p className="text-sm font-black text-foundy-green">Foundy protege pessoas antes de proteger objetos.</p>
+        <p className="mt-1 text-sm text-foundy-muted">Contato: <a className="font-bold text-foundy-green underline-offset-4 hover:underline" href={supportMailto}>{supportEmail}</a></p>
+        <p className="mt-1 text-sm text-foundy-muted">Criado por Diego Corazza e Gustavo Alves.</p>
+      </div>
+    </footer>
+  )
+}
+
+function ModalBase({ titulo, subtitulo, onClose, children }: { titulo: string; subtitulo?: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-end bg-black/65 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true">
+      <section className="foundy-modal-panel max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-3xl border border-foundy-border bg-foundy-surface shadow-2xl">
+        <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-foundy-border bg-foundy-surface/95 p-4 backdrop-blur">
+          <div>
+            <h2 className="text-lg font-black">{titulo}</h2>
             {subtitulo ? <p className="mt-1 text-sm text-foundy-muted">{subtitulo}</p> : null}
           </div>
-          <button
-            className="grid size-9 place-items-center rounded-xl border border-foundy-border text-foundy-foreground"
-            type="button"
-            aria-label="Fechar"
-            onClick={onClose}
-          >
-            <X size={18} aria-hidden="true" />
+          <button className="grid size-10 shrink-0 place-items-center rounded-xl border border-foundy-border" type="button" onClick={onClose} aria-label="Fechar">
+            <X size={18} />
           </button>
         </header>
         {children}
@@ -859,432 +822,110 @@ function ModalBase({
   )
 }
 
-function ModalBuscaFiltros({
-  buscaTexto,
-  filtro,
-  itensVisiveis,
-  totalItens,
-  onBuscaTextoChange,
-  onFiltroChange,
-  onLimpar,
-  onVerMapa,
-  onClose,
-}: {
-  buscaTexto: string
-  filtro: CategoriaItem | 'todos'
-  itensVisiveis: number
-  totalItens: number
-  onBuscaTextoChange: (value: string) => void
-  onFiltroChange: (value: CategoriaItem | 'todos') => void
-  onLimpar: () => void
-  onVerMapa: () => void
-  onClose: () => void
-}) {
-  const filtros = Object.keys(categorias) as CategoriaItem[]
-
-  function verResultadoNoMapa() {
-    onClose()
-    window.setTimeout(onVerMapa, 80)
-  }
-
-  return (
-    <ModalBase
-      titulo="Buscar no Radar"
-      subtitulo="Use texto e categorias visuais para encontrar itens sem poluir o mapa."
-      onClose={onClose}
-    >
-      <div className="grid gap-5 p-4">
-        <label className="foundy-search-input flex min-h-14 items-center gap-3 rounded-3xl border border-foundy-green/35 bg-foundy-background px-4 shadow-inner">
-          <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-foundy-green text-slate-950">
-            <Search size={19} aria-hidden="true" />
-          </span>
-          <span className="sr-only">Pesquisar itens achados</span>
-          <input
-            autoFocus
-            className="h-14 w-full bg-transparent text-sm font-semibold outline-none placeholder:text-foundy-muted"
-            placeholder="Ex.: chave azul, carteira preta, celular, documento..."
-            value={buscaTexto}
-            onChange={(event) => onBuscaTextoChange(event.target.value)}
-          />
-        </label>
-
-        <div className="rounded-3xl border border-foundy-border bg-foundy-background/60 p-3">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-black">Filtros visuais</p>
-              <p className="text-xs text-foundy-muted">Escolha uma categoria ou mantenha tudo no radar.</p>
-            </div>
-            <span className="grid size-9 place-items-center rounded-2xl bg-foundy-blue/15 text-foundy-blue">
-              <SlidersHorizontal size={17} aria-hidden="true" />
-            </span>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              className={`foundy-filter-card foundy-pressable rounded-3xl border p-4 text-left ${
-                filtro === 'todos'
-                  ? 'border-foundy-green bg-foundy-green/15 shadow-lg shadow-foundy-green/10'
-                  : 'border-foundy-border bg-foundy-surface/70'
-              }`}
-              type="button"
-              onClick={() => onFiltroChange('todos')}
-            >
-              <span className="mb-3 grid size-11 place-items-center rounded-2xl bg-foundy-blue/15 text-foundy-blue">
-                <PackageSearch size={21} aria-hidden="true" />
-              </span>
-              <span className="block text-sm font-black">Todos os itens</span>
-              <span className="mt-1 block text-xs leading-5 text-foundy-muted">Mostra tudo que está disponível no Radar.</span>
-            </button>
-
-            {filtros.map((categoria) => {
-              const CategoriaIcon = categorias[categoria].Icon
-              const ativo = filtro === categoria
-              return (
-                <button
-                  className={`foundy-filter-card foundy-pressable rounded-3xl border p-4 text-left ${
-                    ativo
-                      ? 'border-foundy-green bg-foundy-green/15 shadow-lg shadow-foundy-green/10'
-                      : 'border-foundy-border bg-foundy-surface/70'
-                  }`}
-                  key={categoria}
-                  type="button"
-                  onClick={() => onFiltroChange(categoria)}
-                >
-                  <span className="mb-3 grid size-11 place-items-center rounded-2xl bg-foundy-green/15 text-foundy-green">
-                    <CategoriaIcon size={21} aria-hidden="true" />
-                  </span>
-                  <span className="block text-sm font-black">{categorias[categoria].label}</span>
-                  <span className="mt-1 block text-xs leading-5 text-foundy-muted">{categorias[categoria].description}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface/70 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-black text-foundy-green">{itensVisiveis} de {totalItens} itens visíveis</p>
-            <p className="text-xs text-foundy-muted">Os filtros atualizam o feed e os pontos do mapa imediatamente.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button className="foundy-pressable h-11 rounded-2xl border border-foundy-border px-4 text-sm font-bold" type="button" onClick={onLimpar}>
-              Limpar
-            </button>
-            <button
-              className="foundy-pressable h-11 rounded-2xl bg-foundy-green px-4 text-sm font-black text-slate-950"
-              type="button"
-              onClick={verResultadoNoMapa}
-            >
-              Ver no mapa
-            </button>
-          </div>
-        </div>
-      </div>
-    </ModalBase>
-  )
-}
-
-function ModalAutenticacao({
-  onSessaoAtiva,
-  onClose,
-}: {
-  onSessaoAtiva: (sessao: FoundySession) => void
-  onClose: () => void
-}) {
-  const [modo, setModo] = useState<'entrar' | 'cadastrar'>('entrar')
+function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao: FoundySession) => void; onClose: () => void }) {
+  const [modo, setModo] = useState<'entrar' | 'cadastrar'>('cadastrar')
   const [nome, setNome] = useState('')
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
-  const [mensagem, setMensagem] = useState(
-    'Confirme seu e-mail para publicar, criar alertas e usar o chat. Em ambiente sem SMTP, a conta é liberada automaticamente para testes.',
-  )
+  const [maior, setMaior] = useState(false)
+  const [termos, setTermos] = useState(false)
+  const [emailNotificacoes, setEmailNotificacoes] = useState(true)
+  const [mensagem, setMensagem] = useState('Crie sua conta para publicar, conversar e receber alertas.')
   const [enviando, setEnviando] = useState(false)
 
   async function enviar() {
+    if (!email.includes('@')) return setMensagem('Informe um e-mail valido.')
+    if (senha.length < 8) return setMensagem('A senha precisa ter pelo menos 8 caracteres.')
+    if (modo === 'cadastrar' && nome.trim().length < 2) return setMensagem('Informe seu nome.')
+    if (modo === 'cadastrar' && (!maior || !termos)) return setMensagem('Confirme maioridade e aceite os termos para continuar.')
+
     setEnviando(true)
     try {
       if (modo === 'cadastrar') {
-        const resposta = await cadastrarUsuario({ nome, email, senha })
+        const resposta = await cadastrarUsuario({ nome, email, senha, maior_de_idade: maior, aceitou_termos: termos, aceita_notificacoes_email: emailNotificacoes })
         setMensagem(resposta.mensagem)
-        if (resposta.login_liberado) {
-          const login = await entrarUsuario({ email, senha })
-          setMensagem(`Conta criada, verificada e sessão iniciada. Badge atual: ${login.badge_publica}.`)
-          onSessaoAtiva(login)
-        }
-      } else {
-        const resposta = await entrarUsuario({ email, senha })
-        setMensagem(`Sessão iniciada. Badge atual: ${resposta.badge_publica}.`)
-        onSessaoAtiva(resposta)
+        if (!resposta.login_liberado) return
       }
+      const login = await entrarUsuario({ email: email.trim().toLowerCase(), senha })
+      onSessaoAtiva(login)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'Não foi possível concluir a autenticação.')
+      setMensagem(error instanceof Error ? error.message : 'Nao foi possivel concluir a autenticacao.')
     } finally {
       setEnviando(false)
     }
   }
 
   return (
-    <ModalBase titulo={modo === 'entrar' ? 'Entrar na Foundy' : 'Criar conta segura'} onClose={onClose}>
+    <ModalBase titulo={modo === 'entrar' ? 'Entrar na Foundy' : 'Criar conta segura'} subtitulo="Uso permitido apenas para maiores de 18 anos." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <div className="grid grid-cols-2 gap-2 rounded-2xl bg-foundy-background p-1">
-          <button
-            className={`rounded-xl px-3 py-2 text-sm font-bold ${modo === 'entrar' ? 'bg-foundy-blue text-white' : 'text-foundy-muted'}`}
-            type="button"
-            onClick={() => setModo('entrar')}
-          >
-            Entrar
-          </button>
-          <button
-            className={`rounded-xl px-3 py-2 text-sm font-bold ${modo === 'cadastrar' ? 'bg-foundy-blue text-white' : 'text-foundy-muted'}`}
-            type="button"
-            onClick={() => setModo('cadastrar')}
-          >
-            Cadastrar
-          </button>
+          <button className={`rounded-xl px-3 py-2 text-sm font-bold ${modo === 'entrar' ? 'bg-foundy-blue text-white' : 'text-foundy-muted'}`} type="button" onClick={() => setModo('entrar')}>Entrar</button>
+          <button className={`rounded-xl px-3 py-2 text-sm font-bold ${modo === 'cadastrar' ? 'bg-foundy-blue text-white' : 'text-foundy-muted'}`} type="button" onClick={() => setModo('cadastrar')}>Cadastrar</button>
         </div>
-
+        {modo === 'cadastrar' ? <Field label="Nome"><input className="foundy-input" value={nome} onChange={(event) => setNome(event.target.value)} placeholder="Seu nome" autoComplete="name" /></Field> : null}
+        <Field label="E-mail"><input className="foundy-input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@email.com" type="email" autoComplete="email" /></Field>
+        <Field label="Senha"><input className="foundy-input" value={senha} onChange={(event) => setSenha(event.target.value)} placeholder="Minimo de 8 caracteres" type="password" autoComplete={modo === 'entrar' ? 'current-password' : 'new-password'} /></Field>
         {modo === 'cadastrar' ? (
-          <label className="grid gap-2 text-sm font-semibold">
-            Nome
-            <input
-              className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-              placeholder="Seu nome"
-              value={nome}
-              onChange={(event) => setNome(event.target.value)}
-            />
-          </label>
+          <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm">
+            <label className="flex gap-3"><input checked={maior} onChange={(event) => setMaior(event.target.checked)} type="checkbox" /> Confirmo que tenho 18 anos ou mais.</label>
+            <label className="flex gap-3"><input checked={termos} onChange={(event) => setTermos(event.target.checked)} type="checkbox" /> Li e aceito os Termos de Uso, LGPD e Protocolo de Seguranca.</label>
+            <label className="flex gap-3"><input checked={emailNotificacoes} onChange={(event) => setEmailNotificacoes(event.target.checked)} type="checkbox" /> Quero receber alertas importantes por e-mail.</label>
+          </div>
         ) : null}
-
-        <label className="grid gap-2 text-sm font-semibold">
-          E-mail
-          <input
-            className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            placeholder="voce@email.com"
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </label>
-        <label className="grid gap-2 text-sm font-semibold">
-          Senha
-          <input
-            className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            placeholder="Sua senha segura"
-            type="password"
-            value={senha}
-            onChange={(event) => setSenha(event.target.value)}
-          />
-        </label>
-
-        <p className="rounded-xl border border-foundy-blue/30 bg-foundy-blue/10 p-3 text-sm text-foundy-blue" aria-live="polite">
-          {mensagem}
-        </p>
-        <button
-          className="h-11 rounded-xl bg-foundy-blue px-4 text-sm font-black text-white"
-          type="button"
-          disabled={enviando}
-          onClick={() => void enviar()}
-        >
-          {enviando ? 'Enviando...' : modo === 'entrar' ? 'Entrar com e-mail verificado' : 'Criar conta e continuar'}
-        </button>
+        <p className="rounded-xl border border-foundy-blue/30 bg-foundy-blue/10 p-3 text-sm text-foundy-blue" aria-live="polite">{mensagem}</p>
+        <button className="h-12 rounded-xl bg-foundy-blue px-4 text-sm font-black text-white" type="button" disabled={enviando} onClick={() => void enviar()}>{enviando ? 'Enviando...' : modo === 'entrar' ? 'Entrar' : 'Criar conta e continuar'}</button>
       </div>
     </ModalBase>
   )
 }
 
-function ModalAcaoRapida({
-  onClose,
-  onEscolherPerdi,
-  onEscolherAchei,
-}: {
-  onClose: () => void
-  onEscolherPerdi: () => void
-  onEscolherAchei: () => void
-}) {
-  return (
-    <ModalBase titulo="Nova ação rápida" subtitulo="Selecione o fluxo ideal para seu caso." onClose={onClose}>
-      <div className="grid gap-3 p-4">
-        <button
-          className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-red-500 px-4 text-left text-white"
-          type="button"
-          onClick={onEscolherPerdi}
-        >
-          <span>
-            <strong className="block">Perdi algo</strong>
-            <span className="text-sm opacity-90">Criar perímetro ativo de busca</span>
-          </span>
-          <MapPin size={18} aria-hidden="true" />
-        </button>
-        <button
-          className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-foundy-green px-4 text-left text-slate-950"
-          type="button"
-          onClick={onEscolherAchei}
-        >
-          <span>
-            <strong className="block">Achei algo</strong>
-            <span className="text-sm opacity-90">Publicar item com desafio oculto</span>
-          </span>
-          <CheckCircle2 size={18} aria-hidden="true" />
-        </button>
-      </div>
-    </ModalBase>
-  )
-}
-
-function ModalManifestoSeguranca({ onClose }: { onClose: () => void }) {
-  return (
-    <ModalBase
-      titulo="Segurança em Primeiro Lugar"
-      subtitulo="O Protocolo Foundy para encontros físicos mais seguros."
-      onClose={onClose}
-    >
-      <div className="grid gap-4 p-4">
-        <div className="rounded-3xl border border-foundy-green/30 bg-foundy-green/10 p-4">
-          <p className="text-sm font-black text-foundy-green">No Foundy, nossa missão é conectar honestidade com alívio.</p>
-          <p className="mt-2 text-sm leading-6 text-foundy-muted">
-            Para que essa história tenha um final feliz, a sua segurança física é nossa prioridade absoluta. Ao recuperar ou devolver
-            um objeto, siga estas regras antes de combinar qualquer encontro.
-          </p>
-        </div>
-
-        <div className="grid gap-3">
-          <ProtocoloItem
-            titulo="Encontros apenas em locais públicos"
-            texto="Nunca marque a entrega em residências, locais isolados ou estacionamentos vazios. Escolha locais movimentados, iluminados e com segurança, como estações de metrô, praças de alimentação de shoppings ou em frente a bases policiais."
-          />
-          <ProtocoloItem
-            titulo="Use a luz do dia"
-            texto="Marque os encontros exclusivamente em horários de grande movimento, entre 8h e 18h. Nunca faça entregas à noite."
-          />
-          <ProtocoloItem
-            titulo="Faça a Pergunta Secreta"
-            texto="Se você perdeu o item, comprove que ele é seu antes do encontro. Se for um celular, diga o papel de parede; se for uma carteira, cite os documentos dentro; se for uma chave, descreva o chaveiro."
-          />
-          <ProtocoloItem
-            titulo="Não vá sozinho"
-            texto="Sempre que possível, leve um amigo ou familiar com você no momento da entrega."
-          />
-        </div>
-
-        <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm leading-6 text-foundy-foreground">
-          <AlertTriangle className="mb-2" size={18} aria-hidden="true" />
-          O Foundy é uma ponte digital de comunicação e comunidade. Não nos responsabilizamos pelos encontros físicos; por isso,
-          siga o protocolo e cuide de si mesmo e do próximo.
-        </div>
-        <a
-          className="foundy-pressable inline-flex min-h-11 items-center justify-center rounded-2xl border border-foundy-border px-4 text-center text-sm font-black text-foundy-green"
-          href={supportMailto}
-        >
-          Falar com o suporte: {supportEmail}
-        </a>
-      </div>
-    </ModalBase>
-  )
-}
-
-function ModalTermosLgpd({ onClose }: { onClose: () => void }) {
-  return (
-    <ModalBase
-      titulo="Termos de Uso e Política de Privacidade"
-      subtitulo="Resumo operacional em conformidade com a LGPD."
-      onClose={onClose}
-    >
-      <div className="grid gap-4 p-4">
-        <ProtocoloItem
-          titulo="1. Escopo do Serviço"
-          texto="O Foundy é uma plataforma de comunidade que atua exclusivamente como um mural digital para aproximar pessoas que perderam ou encontraram objetos. O Foundy não armazena, não inspeciona, não transporta e não garante o estado de conservação de nenhum item postado pelos usuários."
-        />
-        <ProtocoloItem
-          titulo="2. Proteção de Dados e Privacidade (LGPD)"
-          texto="A plataforma nunca exibe endereço residencial ou localização exata de onde o item foi encontrado. O mapa mostra apenas um raio aproximado ou ponto de referência público da região. Ao enviar uma imagem, o usuário declara ciência de que ela ficará visível publicamente para identificação do item."
-        />
-        <ProtocoloItem
-          titulo="Uso de imagens"
-          texto="É proibido postar fotos que exibam rostos de pessoas, dados bancários explícitos, documentos completos, telefones, e-mails reais ou qualquer informação sensível que possa expor terceiros."
-        />
-        <div className="rounded-3xl border border-red-400/30 bg-red-500/10 p-4">
-          <p className="text-sm font-black text-foundy-foreground">3. Conduta Proibida e Golpes</p>
-          <ul className="mt-3 grid gap-2 text-sm leading-6 text-foundy-muted">
-            <li>Cobrar valores abusivos ou “taxas de resgate” como condição para a devolução de um item.</li>
-            <li>Exigir pagamentos antecipados, PIX, transferências, frete ou recompensa antes da entrega física do objeto.</li>
-            <li>Anunciar itens ilegais, armas, medicamentos ou substâncias ilícitas.</li>
-          </ul>
-        </div>
-        <div className="rounded-2xl border border-foundy-border bg-foundy-background p-4 text-sm leading-6 text-foundy-muted">
-          O descumprimento dessas regras pode resultar no banimento imediato e permanente da conta. Em caso de suspeita de crime,
-          dados de acesso podem ser compartilhados com autoridades competentes conforme a legislação aplicável.
-        </div>
-        <div className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm leading-6 text-foundy-muted">
-          Para dúvidas, sugestões, solicitações de privacidade ou suporte, fale com a equipe Foundy pelo e-mail{' '}
-          <a className="font-black text-foundy-green underline-offset-4 hover:underline" href={supportMailto}>
-            {supportEmail}
-          </a>
-          .
-        </div>
-      </div>
-    </ModalBase>
-  )
-}
-
-function ProtocoloItem({ titulo, texto }: { titulo: string; texto: string }) {
-  return (
-    <article className="rounded-2xl border border-foundy-border bg-foundy-background/70 p-4">
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-foundy-blue/15 text-foundy-blue">
-          <ShieldCheck size={16} aria-hidden="true" />
-        </span>
-        <div>
-          <h3 className="text-sm font-black">{titulo}</h3>
-          <p className="mt-1 text-sm leading-6 text-foundy-muted">{texto}</p>
-        </div>
-      </div>
-    </article>
-  )
-}
-
-function ModalItemAchado({
-  sessao,
-  onClose,
-  onPublicado,
-}: {
-  sessao: FoundySession
-  onClose: () => void
-  onPublicado: (item: ItemAchado) => void
-}) {
+function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySession; onClose: () => void; onPublicado: (item: ItemAchado) => void }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [titulo, setTitulo] = useState('')
   const [descricao, setDescricao] = useState('')
-  const [categoria, setCategoria] = useState<CategoriaItem>('outros')
+  const [categoria, setCategoria] = useState<ItemCategory>('outros')
   const [local, setLocal] = useState('')
   const [desafio, setDesafio] = useState('')
   const [detalheOculto, setDetalheOculto] = useState('')
   const [imagemUrl, setImagemUrl] = useState('')
   const [coords, setCoords] = useState<GeoPoint>(defaultPoint)
-  const [processandoImagem, setProcessandoImagem] = useState(false)
   const [tagsImagem, setTagsImagem] = useState<string[]>([])
-  const [textoPadronizado, setTextoPadronizado] = useState<string | null>(null)
-  const [mensagem, setMensagem] = useState('A imagem será processada com filtro automático de privacidade.')
+  const [mensagem, setMensagem] = useState('A imagem sera processada com filtro automatico de privacidade.')
+  const [processando, setProcessando] = useState(false)
 
-  function usarGeolocalizacao() {
-    if (!navigator.geolocation) {
-      setMensagem('Geolocalização indisponível neste navegador.')
+  async function processarImagemSelecionada(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (categoria === 'documentos') {
+      setImagemUrl('')
+      setTagsImagem(['#DocumentoProtegido'])
+      setMensagem('Documento selecionado: por seguranca, a foto nao sera publicada. Descreva apenas dados nao sensiveis.')
       return
     }
+    setProcessando(true)
+    try {
+      const resultado = await processarImagemComPrivacidade(file, `${titulo} ${descricao}`)
+      setImagemUrl(resultado.imagem_data_url)
+      setTagsImagem(resultado.hashtags_ia)
+      setMensagem('Imagem processada com filtros de privacidade.')
+    } catch (error) {
+      setMensagem(error instanceof Error ? error.message : 'Falha ao processar a imagem.')
+    } finally {
+      setProcessando(false)
+    }
+  }
+
+  function usarGeolocalizacao() {
+    if (!navigator.geolocation) return setMensagem('Geolocalizacao indisponivel neste navegador.')
     navigator.geolocation.getCurrentPosition(
-      (posicao) => {
-        setCoords({ latitude: posicao.coords.latitude, longitude: posicao.coords.longitude })
-        setMensagem('Local capturado. O sistema armazenará apenas uma área aproximada.')
-      },
-      () => setMensagem('Não foi possível capturar sua localização. Informe um ponto de referência.'),
+      (posicao) => { setCoords({ latitude: posicao.coords.latitude, longitude: posicao.coords.longitude }); setMensagem('Local aproximado capturado.') },
+      () => setMensagem('Nao foi possivel capturar sua localizacao.'),
       { enableHighAccuracy: false, timeout: 8000 },
     )
   }
 
   async function publicar() {
-    if (!titulo.trim() || !descricao.trim() || !desafio.trim() || !detalheOculto.trim()) {
-      setMensagem('Preencha título, descrição, desafio e detalhe oculto para continuar.')
-      return
-    }
+    if (!titulo.trim() || !descricao.trim() || !desafio.trim() || !detalheOculto.trim()) return setMensagem('Preencha titulo, descricao, desafio e detalhe oculto.')
     try {
       const item = await cadastrarItemAchado({
         titulo,
@@ -1295,336 +936,159 @@ function ModalItemAchado({
         local_descricao: local,
         desafio_pergunta: desafio,
         detalhe_oculto: detalheOculto,
-        imagem_url: imagemUrl || null,
+        imagem_url: categoria === 'documentos' ? null : imagemUrl || null,
         tags_ia: tagsImagem.map((tag) => tag.replace(/^#/, '')),
         usuario_id: sessao.usuario_id,
       })
       onPublicado(item)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'Não foi possível publicar o item.')
-    }
-  }
-
-  async function processarImagemSelecionada(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    setProcessandoImagem(true)
-    try {
-      const resultado = await processarImagemComPrivacidade(file, `${titulo} ${descricao}`)
-      setImagemUrl(resultado.imagem_data_url)
-      setTagsImagem(resultado.hashtags_ia)
-      setTextoPadronizado(resultado.texto_publico_padronizado)
-      setMensagem('Imagem processada: faces e documentos foram protegidos antes da publicação.')
-    } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'Falha ao processar a imagem.')
-    } finally {
-      setProcessandoImagem(false)
+      setMensagem(error instanceof Error ? error.message : 'Nao foi possivel publicar o item.')
     }
   }
 
   return (
-    <ModalBase titulo="Cadastrar item achado" subtitulo="Somente usuários verificados podem publicar." onClose={onClose}>
+    <ModalBase titulo="Cadastrar item achado" subtitulo="Fotos de documentos nunca sao publicadas." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="grid gap-2 text-sm font-semibold">
-            Título
-            <input
-              className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-              value={titulo}
-              onChange={(event) => setTitulo(event.target.value)}
-              placeholder="Ex.: Chave com fita azul"
-            />
-          </label>
-          <label className="grid gap-2 text-sm font-semibold">
-            Categoria
-            <select
-              className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-              value={categoria}
-              onChange={(event) => setCategoria(event.target.value as CategoriaItem)}
-            >
-              <option value="documentos">Documentos</option>
-              <option value="eletronicos">Eletrônicos</option>
-              <option value="chaves">Chaves</option>
-              <option value="vestuario">Vestuário</option>
-              <option value="outros">Outros</option>
-            </select>
-          </label>
+          <Field label="Titulo"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} placeholder="Ex.: Chave com fita azul" /></Field>
+          <Field label="Categoria"><select className="foundy-input" value={categoria} onChange={(event) => { const value = event.target.value as ItemCategory; setCategoria(value); if (value === 'documentos') setImagemUrl('') }}>{Object.entries(categorias).map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
         </div>
-
-        <label className="grid gap-2 text-sm font-semibold">
-          Descrição pública
-          <textarea
-            className="min-h-24 rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            value={descricao}
-            onChange={(event) => setDescricao(event.target.value)}
-            placeholder="Descreva sem expor telefone, e-mail ou endereço exato."
-          />
-        </label>
-        <div className="grid gap-2">
-          <button
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-foundy-border text-sm font-bold"
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Camera size={17} aria-hidden="true" />
-            {processandoImagem ? 'Processando imagem...' : 'Upload de imagem com filtro de privacidade'}
-          </button>
-          <input
-            accept="image/*"
-            className="sr-only"
-            ref={fileInputRef}
-            type="file"
-            onChange={(event) => void processarImagemSelecionada(event)}
-          />
-          {imagemUrl ? <img src={imagemUrl} alt="Prévia protegida do item" className="h-44 w-full rounded-2xl object-cover" /> : null}
-          {textoPadronizado ? (
-            <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">
-              Texto público padronizado: <strong>{textoPadronizado}</strong>
-            </p>
-          ) : null}
-          {tagsImagem.length > 0 ? (
-            <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">
-              Tags sugeridas automaticamente: {tagsImagem.join(' ')}
-            </p>
-          ) : null}
-        </div>
-        <label className="grid gap-2 text-sm font-semibold">
-          Local aproximado
-          <input
-            className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            value={local}
-            onChange={(event) => setLocal(event.target.value)}
-            placeholder="Ex.: perto da praça ou estação"
-          />
-        </label>
+        <Field label="Descricao publica"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} placeholder="Nao informe telefone, e-mail, CPF ou endereco exato." /></Field>
+        <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-foundy-border text-sm font-bold disabled:opacity-60" type="button" onClick={() => fileInputRef.current?.click()} disabled={processando}>
+          <Camera size={17} /> {categoria === 'documentos' ? 'Documento: foto bloqueada' : processando ? 'Processando...' : 'Upload com privacidade'}
+        </button>
+        <input accept="image/*" className="sr-only" ref={fileInputRef} type="file" onChange={(event) => void processarImagemSelecionada(event)} />
+        {imagemUrl ? <img src={imagemUrl} alt="Previa protegida do item" className="h-44 w-full rounded-2xl object-cover" /> : null}
+        <Field label="Local aproximado"><input className="foundy-input" value={local} onChange={(event) => setLocal(event.target.value)} placeholder="Ex.: perto da praca" /></Field>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="grid gap-2 text-sm font-semibold">
-            Desafio do dono
-            <input
-              className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-              value={desafio}
-              onChange={(event) => setDesafio(event.target.value)}
-              placeholder="Ex.: Qual detalhe interno?"
-            />
-          </label>
-          <label className="grid gap-2 text-sm font-semibold">
-            Detalhe oculto
-            <input
-              className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-              value={detalheOculto}
-              onChange={(event) => setDetalheOculto(event.target.value)}
-              placeholder="Resposta que só o dono sabe"
-            />
-          </label>
+          <Field label="Desafio do dono"><input className="foundy-input" value={desafio} onChange={(event) => setDesafio(event.target.value)} placeholder="Ex.: Qual detalhe interno?" /></Field>
+          <Field label="Detalhe oculto"><input className="foundy-input" value={detalheOculto} onChange={(event) => setDetalheOculto(event.target.value)} placeholder="Resposta que so o dono sabe" /></Field>
         </div>
-        <button
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-foundy-border text-sm font-bold"
-          type="button"
-          onClick={usarGeolocalizacao}
-        >
-          <Camera size={17} aria-hidden="true" />
-          Usar minha localização
-        </button>
+        <button className="h-10 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={usarGeolocalizacao}>Usar minha localizacao</button>
         <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
-        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => void publicar()}>
-          Publicar com detalhe oculto
-        </button>
+        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => void publicar()}>Publicar com detalhe oculto</button>
       </div>
     </ModalBase>
   )
 }
 
-function ModalPerdiAlgo({
-  sessao,
-  pontoInicial,
-  onClose,
-  onCriado,
-}: {
-  sessao: FoundySession
-  pontoInicial: GeoPoint
-  onClose: () => void
-  onCriado: (mensagem: string) => void
-}) {
+function ModalPerdiAlgo({ sessao, pontoInicial, onClose, onCriado }: { sessao: FoundySession; pontoInicial: GeoPoint; onClose: () => void; onCriado: (mensagem: string) => void }) {
   const [titulo, setTitulo] = useState('')
   const [descricao, setDescricao] = useState('')
   const [hashtags, setHashtags] = useState('#chave #fitaazul')
   const [ponto, setPonto] = useState<GeoPoint>(pontoInicial)
   const [raio, setRaio] = useState(5000)
-  const [mensagem, setMensagem] = useState('Toque no mapa para posicionar o centro do perímetro de perda.')
-
-  function usarMeuLocal() {
-    if (!navigator.geolocation) {
-      setMensagem('Geolocalização indisponível neste navegador.')
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      (posicao) => {
-        setPonto({ latitude: posicao.coords.latitude, longitude: posicao.coords.longitude })
-        setMensagem('Centro do perímetro ajustado para sua posição atual.')
-      },
-      () => setMensagem('Não foi possível obter sua posição. Você pode tocar no mapa para escolher outro ponto.'),
-      { enableHighAccuracy: false, timeout: 8000 },
-    )
-  }
+  const [mensagem, setMensagem] = useState('Toque no mapa para posicionar o centro do perimetro.')
 
   async function criar() {
-    if (!titulo.trim() || !descricao.trim()) {
-      setMensagem('Preencha título e descrição para ativar o perímetro.')
-      return
-    }
-    const parsedHashtags = hashtags
-      .split(/[\s,]+/)
-      .map((tag) => tag.trim())
-      .filter(Boolean)
-      .map((tag) => tag.replace(/^#/, ''))
+    if (!titulo.trim() || !descricao.trim()) return setMensagem('Preencha titulo e descricao.')
     try {
-      const resposta = await criarAlertaPerdido({
-        usuario_id: sessao.usuario_id,
-        titulo,
-        descricao,
-        hashtags: parsedHashtags,
-        latitude: ponto.latitude,
-        longitude: ponto.longitude,
-        raio_metros: raio,
-      })
+      const resposta = await criarAlertaPerdido({ usuario_id: sessao.usuario_id, titulo, descricao, hashtags: hashtags.split(/[\s,]+/).map((tag) => tag.replace(/^#/, '')).filter(Boolean), latitude: ponto.latitude, longitude: ponto.longitude, raio_metros: raio })
       onCriado(resposta.mensagem)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'Não foi possível criar o alerta perdido.')
+      setMensagem(error instanceof Error ? error.message : 'Nao foi possivel criar o alerta perdido.')
     }
   }
 
   return (
-    <ModalBase
-      titulo="Perímetro ativo de perda"
-      subtitulo="Se um item compatível entrar nesta área, você recebe alerta instantâneo."
-      onClose={onClose}
-    >
+    <ModalBase titulo="Perimetro ativo de perda" subtitulo="Receba notificacao se surgir item compativel." onClose={onClose}>
       <div className="grid gap-4 p-4">
-        <label className="grid gap-2 text-sm font-semibold">
-          Título do item perdido
-          <input
-            className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            value={titulo}
-            onChange={(event) => setTitulo(event.target.value)}
-            placeholder="Ex.: Perdi meu celular preto"
-          />
-        </label>
-        <label className="grid gap-2 text-sm font-semibold">
-          Descrição
-          <textarea
-            className="min-h-24 rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            value={descricao}
-            onChange={(event) => setDescricao(event.target.value)}
-            placeholder="Detalhes importantes para matching seguro"
-          />
-        </label>
-        <label className="grid gap-2 text-sm font-semibold">
-          Hashtags
-          <input
-            className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            value={hashtags}
-            onChange={(event) => setHashtags(event.target.value)}
-            placeholder="#chave #mickey #fitaazul"
-          />
-        </label>
-        <button
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foundy-border text-sm font-semibold"
-          type="button"
-          onClick={usarMeuLocal}
-        >
-          <LocateFixed size={16} aria-hidden="true" />
-          Usar minha posição atual
-        </button>
-
+        <Field label="Titulo"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} placeholder="Ex.: Perdi meu celular preto" /></Field>
+        <Field label="Descricao"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} /></Field>
+        <Field label="Hashtags"><input className="foundy-input" value={hashtags} onChange={(event) => setHashtags(event.target.value)} /></Field>
         <MapaPerimetro center={ponto} radius={raio} onCenterChange={setPonto} />
-
-        <label className="grid gap-2 text-sm font-semibold">
-          Raio do perímetro ({Math.round(raio / 1000)} km)
-          <input
-            type="range"
-            min={500}
-            max={50000}
-            step={500}
-            value={raio}
-            onChange={(event) => setRaio(Number(event.target.value))}
-          />
-        </label>
-
+        <Field label={`Raio (${Math.round(raio / 1000)} km)`}><input type="range" min={500} max={50000} step={500} value={raio} onChange={(event) => setRaio(Number(event.target.value))} /></Field>
         <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
-        <button className="h-11 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={() => void criar()}>
-          Ativar perímetro de perda
-        </button>
+        <button className="h-11 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={() => void criar()}>Ativar alerta de perda</button>
       </div>
     </ModalBase>
   )
 }
 
-function ModalDesafio({
-  item,
-  resposta,
-  onRespostaChange,
-  onConfirmar,
-  onClose,
-}: {
-  item: ItemAchado
-  resposta: string
-  onRespostaChange: (value: string) => void
-  onConfirmar: () => void
-  onClose: () => void
-}) {
+function ModalPerfil({ sessao, painel, onClose, onLogout, onUpdated, onOpenAdmin }: { sessao: FoundySession; painel: UserDashboard | null; onClose: () => void; onLogout: () => void; onUpdated: (sessao: FoundySession) => void; onOpenAdmin?: () => void }) {
+  const fileRef = useRef<HTMLInputElement | null>(null)
+  const [nome, setNome] = useState(sessao.nome)
+  const [ocupacao, setOcupacao] = useState(sessao.ocupacao ?? '')
+  const [fotoUrl, setFotoUrl] = useState(sessao.foto_url ?? '')
+  const [emailNotifications, setEmailNotifications] = useState(sessao.aceita_notificacoes_email !== 'false')
+  const [mensagem, setMensagem] = useState('Atualize seu perfil publico para gerar mais confianca.')
+
+  function selecionarFoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => setFotoUrl(String(reader.result))
+    reader.readAsDataURL(file)
+  }
+
+  async function salvar() {
+    try {
+      const atualizado = await atualizarPerfil(sessao.usuario_id, { nome, ocupacao, foto_url: fotoUrl, aceita_notificacoes_email: emailNotifications })
+      onUpdated(atualizado)
+      setMensagem(atualizado.mensagem)
+    } catch (error) {
+      setMensagem(error instanceof Error ? error.message : 'Nao foi possivel atualizar o perfil.')
+    }
+  }
+
   return (
-    <ModalBase titulo="Verificação do dono" subtitulo="O chat só abre após validação do detalhe oculto." onClose={onClose}>
+    <ModalBase titulo="Minha pagina Foundy" subtitulo="Perfil, karma, itens e preferencias." onClose={onClose}>
       <div className="grid gap-4 p-4">
-        <div className="rounded-2xl border border-foundy-blue/30 bg-foundy-blue/10 p-4">
-          <p className="text-sm font-bold text-foundy-blue">Desafio do dono</p>
-          <p className="mt-1">{item.desafio_pergunta ?? 'Informe um detalhe que só o dono saberia.'}</p>
+        <div className="flex items-center gap-4 rounded-2xl border border-foundy-border bg-foundy-background p-4">
+          {fotoUrl ? <img src={fotoUrl} alt="" className="size-20 rounded-2xl object-cover" /> : <span className="grid size-20 place-items-center rounded-2xl bg-foundy-blue/20"><UserRound size={30} /></span>}
+          <div>
+            <p className="font-black">{sessao.badge_publica}</p>
+            <p className="text-sm text-foundy-muted">{sessao.pontos_luz} Pontos de Luz</p>
+            <button className="mt-2 rounded-xl border border-foundy-border px-3 py-1 text-xs font-bold" type="button" onClick={() => fileRef.current?.click()}>Trocar foto</button>
+            <input className="sr-only" ref={fileRef} type="file" accept="image/*" onChange={selecionarFoto} />
+          </div>
         </div>
-        <label className="grid gap-2 text-sm font-semibold">
-          Sua resposta
-          <input
-            className="rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            value={resposta}
-            onChange={(event) => onRespostaChange(event.target.value)}
-            placeholder="Digite o detalhe oculto"
-          />
-        </label>
-        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={onConfirmar}>
-          Enviar resposta
-        </button>
+        <Field label="Nome"><input className="foundy-input" value={nome} onChange={(event) => setNome(event.target.value)} /></Field>
+        <Field label="Ocupacao ou apresentacao curta"><input className="foundy-input" value={ocupacao} onChange={(event) => setOcupacao(event.target.value)} placeholder="Ex.: estudante, comerciante, morador do bairro" /></Field>
+        <label className="flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><input checked={emailNotifications} onChange={(event) => setEmailNotifications(event.target.checked)} type="checkbox" /> Receber notificacoes importantes por e-mail.</label>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <Metric label="Itens" value={String(painel?.itens_postados.length ?? 0)} />
+          <Metric label="Alertas" value={String(painel?.alertas_perdidos.length ?? 0)} />
+          <Metric label="Chats" value={String(painel?.chats.length ?? 0)} />
+        </div>
+        <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
+        <button className="h-11 rounded-xl bg-foundy-blue text-sm font-black text-white" type="button" onClick={() => void salvar()}>Salvar perfil</button>
+        {onOpenAdmin ? <button className="h-11 rounded-xl border border-red-400/50 text-sm font-black text-red-200" type="button" onClick={onOpenAdmin}>Abrir painel administrativo</button> : null}
+        <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={onLogout}><LogOut size={16} /> Sair</button>
       </div>
     </ModalBase>
   )
 }
 
-function ModalAguardandoValidacao({
-  reivindicacaoId,
-  onClose,
-  onValidar,
-}: {
-  reivindicacaoId: string | null
-  onClose: () => void
-  onValidar: (aprovada: boolean) => void
-}) {
+function ModalNotificacoes({ notificacoes, onClose, onOpen }: { notificacoes: NotificationItem[]; onClose: () => void; onOpen: (notificacao: NotificationItem) => void }) {
   return (
-    <ModalBase titulo="Aguardando validação do encontrador" onClose={onClose}>
-      <div className="grid gap-4 p-4">
-        <p className="text-sm text-foundy-muted">
-          O encontrador precisa confirmar se a resposta está correta. Reivindicação atual: <strong>{reivindicacaoId ?? 'não identificada'}</strong>.
-        </p>
-        <div className="rounded-2xl border border-amber-300/30 bg-amber-200/10 p-4 text-sm text-amber-100">
-          Fluxo de teste: para simular o papel do encontrador neste protótipo, use os botões abaixo.
-        </div>
-        <button
-          className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950"
-          type="button"
-          onClick={() => onValidar(true)}
-        >
-          A resposta está correta
-        </button>
-        <button className="h-11 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={() => onValidar(false)}>
-          A resposta está incorreta
-        </button>
+    <ModalBase titulo="Notificacoes" subtitulo="Clique para ir direto ao chat, item ou validacao." onClose={onClose}>
+      <div className="grid gap-3 p-4">
+        {notificacoes.length === 0 ? <EmptyState title="Sem notificacoes" text="Quando algo importante acontecer, o sininho avisa." /> : null}
+        {notificacoes.map((notificacao) => (
+          <button className={`rounded-2xl border p-4 text-left ${notificacao.lida_em ? 'border-foundy-border bg-foundy-background' : 'border-foundy-green/40 bg-foundy-green/10'}`} key={notificacao.id} type="button" onClick={() => onOpen(notificacao)}>
+            <p className="font-black">{notificacao.titulo}</p>
+            <p className="mt-1 text-sm text-foundy-muted">{notificacao.mensagem}</p>
+            <p className="mt-2 text-xs text-foundy-muted">{new Date(notificacao.criado_em).toLocaleString('pt-BR')}</p>
+          </button>
+        ))}
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalChats({ chats, onClose, onOpen }: { chats: ChatSummary[]; onClose: () => void; onOpen: (chat: ChatSummary) => void }) {
+  return (
+    <ModalBase titulo="Meus chats" subtitulo="Conversas liberadas apos o desafio do dono." onClose={onClose}>
+      <div className="grid gap-3 p-4">
+        {chats.length === 0 ? <EmptyState title="Nenhum chat ainda" text="Quando uma resposta for aprovada, a conversa aparece aqui." /> : null}
+        {chats.map((chat) => (
+          <button className="rounded-2xl border border-foundy-border bg-foundy-background p-4 text-left" key={chat.id} type="button" onClick={() => onOpen(chat)}>
+            <p className="font-black">{chat.item_titulo}</p>
+            <p className="mt-1 text-sm text-foundy-muted">{chat.ultima_mensagem ?? 'Conversa pronta para iniciar.'}</p>
+            <span className="mt-3 inline-flex rounded-full bg-foundy-green/20 px-3 py-1 text-xs font-bold text-foundy-green">{chat.status}</span>
+          </button>
+        ))}
       </div>
     </ModalBase>
   )
@@ -1632,6 +1096,7 @@ function ModalAguardandoValidacao({
 
 function ModalChatSeguro({
   item,
+  chat,
   chatCarregando,
   mensagens,
   valorAtual,
@@ -1639,9 +1104,12 @@ function ModalChatSeguro({
   onEnviar,
   onDenunciar,
   denunciarDisponivel,
+  podeAvaliar,
+  onConfirmarDevolucao,
   onClose,
 }: {
-  item: ItemAchado
+  item: ItemAchado | null
+  chat: ChatSummary | null
   chatCarregando: boolean
   mensagens: MensagemChat[]
   valorAtual: string
@@ -1649,69 +1117,204 @@ function ModalChatSeguro({
   onEnviar: () => void
   onDenunciar: () => void
   denunciarDisponivel: boolean
+  podeAvaliar: boolean
+  onConfirmarDevolucao: (nota: number) => void | Promise<void>
   onClose: () => void
 }) {
-  return (
-    <ModalBase titulo="Chat privado de recuperação" subtitulo={`Item: ${item.titulo}`} onClose={onClose}>
-      <div className="grid gap-4 p-4">
-        <div className="rounded-2xl border border-foundy-green/30 bg-foundy-green/15 p-4 text-sm text-foundy-green">
-          <CheckCircle2 className="mb-2" size={18} aria-hidden="true" />
-          Chat desbloqueado com protocolo de segurança. Combine a devolução em local público e monitorado.
-        </div>
+  const [nota, setNota] = useState(10)
+  const [avaliando, setAvaliando] = useState(false)
+  const [mensagemAvaliacao, setMensagemAvaliacao] = useState('Depois da entrega, avalie o encontrador para atualizar o karma.')
 
-        <div className="max-h-64 space-y-2 overflow-auto rounded-2xl border border-foundy-border bg-foundy-background p-3">
-          {chatCarregando ? <p className="text-sm text-foundy-muted">Carregando mensagens...</p> : null}
-          {!chatCarregando && mensagens.length === 0 ? (
-            <p className="text-sm text-foundy-muted">Nenhuma mensagem ainda. Envie a primeira mensagem segura.</p>
-          ) : null}
+  async function confirmarAvaliacao() {
+    setAvaliando(true)
+    try {
+      await onConfirmarDevolucao(nota)
+      setMensagemAvaliacao(`Devolucao confirmada com nota ${nota}/10. Obrigado por fortalecer a comunidade.`)
+    } catch (error) {
+      setMensagemAvaliacao(error instanceof Error ? error.message : 'Nao foi possivel confirmar a devolucao.')
+    } finally {
+      setAvaliando(false)
+    }
+  }
+
+  return (
+    <ModalBase titulo="Chat privado de recuperacao" subtitulo={item ? `Item: ${item.titulo}` : chat?.item_titulo ?? 'Conversa segura'} onClose={onClose}>
+      <div className="grid gap-4 p-4">
+        <div className="rounded-2xl border border-foundy-green/30 bg-foundy-green/15 p-4 text-sm text-foundy-green"><CheckCircle2 className="mb-2" size={18} /> Chat protegido. Combine entrega em local publico e de dia.</div>
+        <div className="max-h-72 space-y-2 overflow-auto rounded-2xl border border-foundy-border bg-foundy-background p-3">
+          {chatCarregando ? <p className="text-sm text-foundy-muted">Atualizando mensagens...</p> : null}
+          {!chatCarregando && mensagens.length === 0 ? <p className="text-sm text-foundy-muted">Nenhuma mensagem ainda. Envie a primeira mensagem segura.</p> : null}
           {mensagens.map((mensagem) => (
-            <article
-              className={`rounded-xl p-3 text-sm ${
-                mensagem.status_moderacao === 'suspeita_extorsao' ? 'border border-red-500/40 bg-red-500/10' : 'bg-foundy-surface'
-              }`}
-              key={mensagem.id}
-            >
+            <article className={`rounded-xl p-3 text-sm ${mensagem.status_moderacao === 'suspeita_extorsao' ? 'border border-red-500/40 bg-red-500/10' : 'bg-foundy-surface'}`} key={mensagem.id}>
               <p>{mensagem.mensagem}</p>
               <p className="mt-1 text-xs text-foundy-muted">{new Date(mensagem.criado_em).toLocaleString('pt-BR')}</p>
             </article>
           ))}
         </div>
-
-        <label className="grid gap-2 text-sm font-semibold">
-          Mensagem
-          <textarea
-            className="min-h-24 rounded-xl border border-foundy-border bg-foundy-background px-3 py-3 outline-none focus:border-foundy-blue"
-            placeholder="Digite uma mensagem respeitosa e sem solicitar pagamento."
-            value={valorAtual}
-            onChange={(event) => onChangeValor(event.target.value)}
-          />
-        </label>
-        <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-foundy-blue px-4 text-sm font-black text-white" type="button" onClick={onEnviar}>
-          <Send size={16} aria-hidden="true" />
-          Enviar mensagem
-        </button>
-
-        {denunciarDisponivel ? (
-          <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={onDenunciar}>
-            <Flag size={16} aria-hidden="true" />
-            Denunciar Extorsão e avisar suporte
-          </button>
-        ) : (
-          <div className="rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">
-            O botão de denúncia é ativado automaticamente se houver tentativa de cobrança indevida. O suporte oficial é {supportEmail}.
+        <Field label="Mensagem"><textarea className="foundy-input min-h-24" value={valorAtual} onChange={(event) => onChangeValor(event.target.value)} placeholder="Digite uma mensagem respeitosa e sem pedir pagamento." /></Field>
+        <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-foundy-blue px-4 text-sm font-black text-white" type="button" onClick={onEnviar}><Send size={16} /> Enviar mensagem</button>
+        {denunciarDisponivel ? <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={onDenunciar}><Flag size={16} /> Denunciar extorsao</button> : <p className="rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">Se alguem pedir PIX, pagamento ou resgate, o botao de denuncia sera ativado.</p>}
+        {podeAvaliar ? (
+          <div className="grid gap-3 rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-black text-foundy-green">Confirmar devolucao e karma</p>
+                <p className="mt-1 text-sm text-foundy-muted">{mensagemAvaliacao}</p>
+              </div>
+              <Star className="text-foundy-green" size={22} />
+            </div>
+            <Field label={`Nota da entrega: ${nota}/10`}>
+              <input type="range" min={0} max={10} value={nota} onChange={(event) => setNota(Number(event.target.value))} />
+            </Field>
+            <button className="h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950 disabled:opacity-60" type="button" disabled={avaliando} onClick={() => void confirmarAvaliacao()}>
+              {avaliando ? 'Confirmando...' : 'Confirmar devolucao'}
+            </button>
           </div>
-        )}
-
-        <div className="rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-3 text-sm text-yellow-100">
-          <AlertTriangle className="mb-2" size={16} aria-hidden="true" />
-          Se alguém pedir PIX, pagamento, cobrança ou resgate para devolver o item, denuncie imediatamente. A denúncia é registrada
-          no Foundy e o suporte é avisado por e-mail quando o SMTP está configurado.
-        </div>
-        <a className="text-center text-sm font-bold text-foundy-green underline-offset-4 hover:underline" href={supportMailto}>
-          Contato para dúvidas e sugestões: {supportEmail}
-        </a>
+        ) : null}
       </div>
     </ModalBase>
   )
 }
 
+function ModalOnboarding({ onClose }: { onClose: () => void }) {
+  const steps = [
+    ['1', 'Publique ou busque', 'Escolha Perdi algo ou Achei algo e descreva sem dados sensiveis.'],
+    ['2', 'Prove que e seu', 'Use o detalhe oculto para liberar a conversa apenas para quem realmente conhece o item.'],
+    ['3', 'Combine com seguranca', 'Encontro publico, de dia, acompanhado e sem pagamento antecipado.'],
+    ['4', 'Avalie a entrega', 'Depois da devolucao, a nota vira Pontos de Luz para o encontrador.'],
+  ]
+  return (
+    <ModalBase titulo="Como usar o Foundy com seguranca" subtitulo="Um guia rapido em quadrinhos para evitar riscos." onClose={onClose}>
+      <div className="grid gap-3 p-4 sm:grid-cols-2">
+        {steps.map(([number, title, text]) => (
+          <article className="foundy-comic-card rounded-3xl border border-foundy-border bg-foundy-background p-4" key={number}>
+            <span className="grid size-10 place-items-center rounded-2xl bg-foundy-green text-lg font-black text-slate-950">{number}</span>
+            <h3 className="mt-3 text-lg font-black">{title}</h3>
+            <p className="mt-2 text-sm leading-6 text-foundy-muted">{text}</p>
+          </article>
+        ))}
+        <div className="sm:col-span-2 rounded-2xl border border-red-400/30 bg-red-500/10 p-4 text-sm text-red-100">
+          Proibido para menores de 18 anos. Nunca va sozinho e nunca aceite encontros em locais isolados.
+        </div>
+        <button className="sm:col-span-2 h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={onClose}>Entendi o protocolo</button>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalAdmin({ data, adminId, onClose, onRefresh }: { data: { usuarios: unknown[]; itens: ItemAchado[]; moderacao: unknown[] }; adminId: string; onClose: () => void; onRefresh: () => void }) {
+  const [mensagem, setMensagem] = useState('Painel restrito ao administrador configurado.')
+  async function arquivar(itemId: string) {
+    const motivo = window.prompt('Motivo do arquivamento?') ?? ''
+    if (motivo.length < 5) return
+    const result = await adminArquivarItem(adminId, itemId, motivo)
+    setMensagem(result.mensagem)
+    onRefresh()
+  }
+  async function banir(usuario: unknown) {
+    const user = usuario as { id: string }
+    const motivo = window.prompt('Motivo do banimento?') ?? ''
+    const dias = Number(window.prompt('Quantos dias?', '7') ?? '7')
+    if (motivo.length < 5 || !Number.isFinite(dias)) return
+    const result = await adminBanirUsuario(adminId, user.id, motivo, dias)
+    setMensagem(result.mensagem)
+    onRefresh()
+  }
+  return (
+    <ModalBase titulo="Painel administrativo" subtitulo="Apagar itens, banir usuarios e acompanhar moderacao." onClose={onClose}>
+      <div className="grid gap-4 p-4">
+        <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
+        <PanelList title="Itens recentes" empty="Nenhum item.">{data.itens.map((item) => <div className="flex items-center justify-between gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3" key={item.id}><span className="text-sm font-bold">{item.titulo}</span><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void arquivar(item.id)}><Trash2 size={14} /></button></div>)}</PanelList>
+        <PanelList title="Usuarios" empty="Nenhum usuario.">{data.usuarios.map((usuario) => { const user = usuario as { id: string; nome?: string; email?: string }; return <div className="flex items-center justify-between gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3" key={user.id}><span className="text-sm font-bold">{user.nome ?? user.email ?? user.id}</span><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => void banir(user)}><Ban size={14} /></button></div> })}</PanelList>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalBusca({ filtro, buscaTexto, itensVisiveis, totalItens, onFiltroChange, onBuscaChange, onLimpar, onClose }: { filtro: ItemCategory | 'todos'; buscaTexto: string; itensVisiveis: number; totalItens: number; onFiltroChange: (value: ItemCategory | 'todos') => void; onBuscaChange: (value: string) => void; onLimpar: () => void; onClose: () => void }) {
+  return (
+    <ModalBase titulo="Lupa Foundy" subtitulo="Filtre por texto, categoria e tags inteligentes." onClose={onClose}>
+      <div className="grid gap-4 p-4">
+        <div className="foundy-search-input flex items-center gap-3 rounded-2xl border border-foundy-border bg-foundy-background px-4 py-3"><Search size={20} /><input className="w-full bg-transparent outline-none" value={buscaTexto} onChange={(event) => onBuscaChange(event.target.value)} placeholder="Buscar por chaveiro azul, carteira, fone..." /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FilterCard active={filtro === 'todos'} icon={Search} title="Todos" text="Mostrar tudo" onClick={() => onFiltroChange('todos')} />
+          {(Object.entries(categorias) as [ItemCategory, (typeof categorias)[ItemCategory]][]).map(([value, data]) => <FilterCard active={filtro === value} icon={data.Icon} title={data.label} text={data.description} key={value} onClick={() => onFiltroChange(value)} />)}
+        </div>
+        <div className="flex items-center justify-between rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><span>{itensVisiveis} de {totalItens} itens visiveis</span><button className="rounded-xl border border-foundy-border px-3 py-2 font-bold" type="button" onClick={onLimpar}>Limpar</button></div>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalAcaoRapida({ onClose, onEscolherPerdi, onEscolherAchei }: { onClose: () => void; onEscolherPerdi: () => void; onEscolherAchei: () => void }) {
+  return (
+    <ModalBase titulo="Nova acao rapida" subtitulo="Selecione o fluxo ideal." onClose={onClose}>
+      <div className="grid gap-3 p-4">
+        <button className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-red-500 px-4 text-left text-white" type="button" onClick={onEscolherPerdi}><span><strong className="block">Perdi algo</strong><span className="text-sm opacity-90">Criar alerta com perimetro</span></span><MapPin size={18} /></button>
+        <button className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-foundy-green px-4 text-left text-slate-950" type="button" onClick={onEscolherAchei}><span><strong className="block">Achei algo</strong><span className="text-sm opacity-90">Publicar com desafio oculto</span></span><CheckCircle2 size={18} /></button>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalDesafio({ item, resposta, onRespostaChange, onConfirmar, onClose }: { item: ItemAchado; resposta: string; onRespostaChange: (value: string) => void; onConfirmar: () => void; onClose: () => void }) {
+  return (
+    <ModalBase titulo="Verificacao do dono" subtitulo="O chat so abre apos validacao." onClose={onClose}>
+      <div className="grid gap-4 p-4">
+        <div className="rounded-2xl border border-foundy-blue/30 bg-foundy-blue/10 p-4"><p className="text-sm font-bold text-foundy-blue">Desafio</p><p className="mt-1">{item.desafio_pergunta ?? 'Informe um detalhe que so o dono saberia.'}</p></div>
+        <Field label="Sua resposta"><input className="foundy-input" value={resposta} onChange={(event) => onRespostaChange(event.target.value)} /></Field>
+        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={onConfirmar}>Enviar resposta</button>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalAguardandoValidacao({ reivindicacaoId, onClose, onValidar }: { reivindicacaoId: string | null; onClose: () => void; onValidar: (aprovada: boolean) => void }) {
+  return (
+    <ModalBase titulo="Validacao do detalhe oculto" subtitulo="O encontrador decide se a resposta confere." onClose={onClose}>
+      <div className="grid gap-4 p-4">
+        <p className="text-sm text-foundy-muted">Reivindicacao atual: <strong>{reivindicacaoId ?? 'nao identificada'}</strong>.</p>
+        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => onValidar(true)}>A resposta esta correta</button>
+        <button className="h-11 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={() => onValidar(false)}>A resposta esta incorreta</button>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalManifestoSeguranca({ onClose }: { onClose: () => void }) {
+  return <ModalBase titulo="Seguranca em Primeiro Lugar" subtitulo="O Protocolo Foundy." onClose={onClose}><div className="grid gap-3 p-4"><TrustCard title="Encontros apenas em locais publicos" text="Nunca marque em residencia, local isolado ou estacionamento vazio." /><TrustCard title="Use a luz do dia" text="Marque entre 8h e 18h, em local movimentado." /><TrustCard title="Faca a pergunta secreta" text="Comprove posse antes do encontro." /><TrustCard title="Nao va sozinho" text="Leve um amigo ou familiar sempre que possivel." /><p className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm">O Foundy e uma ponte digital. Nao nos responsabilizamos por encontros fisicos.</p></div></ModalBase>
+}
+
+function ModalTermosLgpd({ onClose }: { onClose: () => void }) {
+  return <ModalBase titulo="Termos de Uso e LGPD" subtitulo="Resumo operacional." onClose={onClose}><div className="grid gap-3 p-4"><TrustCard title="Escopo do servico" text="O Foundy aproxima pessoas que perderam e encontraram objetos. Nao armazenamos, transportamos ou garantimos itens." /><TrustCard title="Privacidade" text="Localizacao exata, telefone, e-mail real e endereco residencial nao devem ser exibidos publicamente." /><TrustCard title="Conduta proibida" text="E proibido cobrar resgate, pedir PIX antecipado, publicar itens ilegais ou expor dados sensiveis." /><TrustCard title="Uso proibido para menores" text="A plataforma e exclusiva para maiores de 18 anos." /></div></ModalBase>
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="grid gap-2 text-sm font-semibold">{label}{children}</label>
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <article className="rounded-2xl border border-foundy-border bg-foundy-surface p-4"><p className="text-2xl font-black text-foundy-green">{value}</p><p className="text-sm text-foundy-muted">{label}</p></article>
+}
+
+function TrustCard({ title, text }: { title: string; text: string }) {
+  return <article className="foundy-trust-card rounded-3xl border border-foundy-border bg-foundy-surface/80 p-4"><ShieldCheck className="mb-3 text-foundy-green" size={20} /><h3 className="font-black">{title}</h3><p className="mt-2 text-sm leading-6 text-foundy-muted">{text}</p></article>
+}
+
+function FilterCard({ active, icon: Icon, title, text, onClick }: { active: boolean; icon: LucideIcon; title: string; text: string; onClick: () => void }) {
+  return <button className={`foundy-filter-card rounded-3xl border p-4 text-left ${active ? 'border-foundy-green bg-foundy-green/15' : 'border-foundy-border bg-foundy-surface/70'}`} type="button" onClick={onClick}><Icon className="mb-3 text-foundy-green" size={20} /><h3 className="font-black">{title}</h3><p className="mt-1 text-sm text-foundy-muted">{text}</p></button>
+}
+
+function EmptyState({ title, text }: { title: string; text: string }) {
+  return <article className="rounded-3xl border border-dashed border-foundy-border bg-foundy-surface/70 p-6 text-center"><Inbox className="mx-auto mb-3 text-foundy-muted" size={24} /><p className="font-black">{title}</p><p className="mt-2 text-sm text-foundy-muted">{text}</p></article>
+}
+
+function PanelList({ title, empty, children }: { title: string; empty: string; children: ReactNode[] | ReactNode }) {
+  const list = Array.isArray(children) ? children.filter(Boolean) : children
+  const isEmpty = Array.isArray(list) ? list.length === 0 : !list
+  return <section className="grid gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4"><h2 className="font-black">{title}</h2>{isEmpty ? <p className="text-sm text-foundy-muted">{empty}</p> : list}</section>
+}
+
+function SimpleRow({ title, text }: { title: string; text: string }) {
+  return <article className="rounded-2xl border border-foundy-border bg-foundy-background p-3"><p className="text-sm font-black">{title}</p><p className="text-xs text-foundy-muted">{text}</p></article>
+}

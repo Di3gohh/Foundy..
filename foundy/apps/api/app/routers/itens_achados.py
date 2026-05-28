@@ -8,18 +8,18 @@ from pydantic import BaseModel, Field
 from postgrest.exceptions import APIError
 
 from app.core.config import settings
-from app.core.filters import scan_chat_message, scan_item_text
+from app.core.filters import censor_sensitive_text, scan_chat_message, scan_item_text
 from app.core.geo import mask_coordinates, validate_coordinates
 from app.core.security import hash_password
 from app.db.supabase_client import get_supabase
 from app.services.ai_processing import generate_hashtag_descriptors
-from app.services.email_service import send_support_email
+from app.services.email_service import send_notification_email, send_support_email
 
 
 router = APIRouter()
 
 CategoriaItem = Literal["documentos", "eletronicos", "chaves", "vestuario", "outros"]
-StatusItem = Literal["publicado", "em_conversa", "devolvido", "arquivado", "destinado para doaÃ§Ã£o"]
+StatusItem = Literal["publicado", "em_conversa", "devolvido", "arquivado", "destinado para doacao"]
 StatusSala = Literal["bloqueado", "aberto", "encerrado", "em_revisao"]
 
 
@@ -174,7 +174,7 @@ async def _buscar_usuario_verificado(usuario_id: UUID) -> dict:
     )
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="UsuÃ¡rio nÃ£o encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado.")
 
     usuario = response.data[0]
     if usuario.get("email_verificado_em") is None:
@@ -195,7 +195,7 @@ async def _buscar_sala_e_participacao(sala_chat_id: UUID, usuario_id: UUID) -> d
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sala de chat nÃ£o encontrada.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sala de chat nao encontrada.")
 
     sala = response.data[0]
     participantes = {
@@ -203,16 +203,16 @@ async def _buscar_sala_e_participacao(sala_chat_id: UUID, usuario_id: UUID) -> d
         str(sala.get("dono_usuario_id")) if sala.get("dono_usuario_id") else None,
     }
     if str(usuario_id) not in participantes:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="VocÃª nÃ£o participa desta sala.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Voce nao participa desta sala.")
     return sala
 
 
 @router.post("", response_model=ItemAchadoOut, status_code=status.HTTP_201_CREATED)
-async def cadastrar_item_achado(payload: ItemAchadoCreate) -> ItemAchadoOut:
+async def cadastrar_item_achado(payload: ItemAchadoCreate, background_tasks: BackgroundTasks) -> ItemAchadoOut:
     if payload.usuario_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Para publicar, faÃ§a login com e-mail verificado.",
+            detail="Para publicar, faca login com e-mail verificado.",
         )
 
     await _buscar_usuario_verificado(payload.usuario_id)
@@ -220,9 +220,24 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate) -> ItemAchadoOut:
     titulo = payload.titulo.strip()
     descricao = payload.descricao.strip()
     local_descricao = payload.local_descricao.strip() if payload.local_descricao else None
+    imagem_publica = None if payload.categoria == "documentos" else payload.imagem_url
+
+    if payload.categoria == "documentos":
+        descricao = censor_sensitive_text(descricao)
+        titulo = censor_sensitive_text(titulo)
 
     scan = scan_item_text(titulo, descricao)
     if scan.blocked:
+        background_tasks.add_task(
+            send_support_email,
+            "Publicacao bloqueada pela moderacao Foundy",
+            (
+                "Uma publicacao foi bloqueada automaticamente.\n\n"
+                f"Usuario: {payload.usuario_id}\n"
+                f"Titulo: {titulo}\n"
+                f"Motivos: {', '.join(scan.reasons)}\n"
+            ),
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=scan.reasons)
 
     try:
@@ -246,7 +261,7 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate) -> ItemAchadoOut:
         "local_descricao": local_descricao,
         "localizacao_aproximada": _wkt_point(longitude_aproximada, latitude_aproximada),
         "raio_mascara_metros": settings.location_mask_radius_meters,
-        "imagem_url": str(payload.imagem_url) if payload.imagem_url else None,
+        "imagem_url": str(imagem_publica) if imagem_publica else None,
         "status": "publicado",
         "desafio_pergunta": payload.desafio_pergunta.strip(),
         "detalhe_oculto_hash": hash_password(payload.detalhe_oculto.strip().casefold()),
@@ -267,10 +282,10 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate) -> ItemAchadoOut:
             .execute()
         )
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel cadastrar o item.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel cadastrar o item.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="O item foi enviado, mas nÃ£o retornou do banco.")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="O item foi enviado, mas nao retornou do banco.")
 
     created = response.data[0]
     created["latitude_aproximada"] = latitude_aproximada
@@ -304,7 +319,7 @@ async def listar_itens_achados_por_proximidade(
             },
         ).execute()
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel carregar os itens.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel carregar os itens.") from exc
 
     return [_normalizar_item(row) for row in response.data]
 
@@ -314,7 +329,7 @@ async def reivindicar_item(item_id: UUID, payload: ReivindicacaoCreate) -> dict[
     if payload.usuario_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="FaÃ§a login com e-mail verificado antes de reivindicar um item.",
+            detail="Faca login com e-mail verificado antes de reivindicar um item.",
         )
     await _buscar_usuario_verificado(payload.usuario_id)
 
@@ -330,17 +345,40 @@ async def reivindicar_item(item_id: UUID, payload: ReivindicacaoCreate) -> dict[
                     "status": "aguardando_validacao",
                 }
             )
-            .select("id")
+            .select("id,item_achado_id")
             .execute()
         )
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel iniciar a verificaÃ§Ã£o.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel iniciar a verificacao.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nÃ£o encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
+
+    item = await (
+        supabase.table("itens_achados")
+        .select("id,titulo,usuario_id")
+        .eq("id", str(item_id))
+        .limit(1)
+        .execute()
+    )
+    if item.data and item.data[0].get("usuario_id"):
+        await (
+            supabase.table("notificacoes")
+            .insert(
+                {
+                    "usuario_id": item.data[0]["usuario_id"],
+                    "tipo": "sistema",
+                    "titulo": "Alguem respondeu ao desafio oculto",
+                    "mensagem": f"Uma pessoa acredita que o item '{item.data[0]['titulo']}' e dela. Confira a resposta.",
+                    "item_achado_id": str(item_id),
+                    "reivindicacao_id": response.data[0]["id"],
+                }
+            )
+            .execute()
+        )
 
     return {
-        "mensagem": "Resposta enviada ao encontrador. O chat serÃ¡ liberado apÃ³s validaÃ§Ã£o.",
+        "mensagem": "Resposta enviada ao encontrador. O chat sera liberado apos validacao.",
         "reivindicacao_id": response.data[0]["id"],
     }
 
@@ -357,7 +395,7 @@ async def validar_reivindicacao(reivindicacao_id: UUID, payload: ValidacaoReivin
         .execute()
     )
     if not reivindicacao.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ReivindicaÃ§Ã£o nÃ£o encontrada.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reivindicacao nao encontrada.")
 
     item = await (
         supabase.table("itens_achados")
@@ -381,10 +419,10 @@ async def validar_reivindicacao(reivindicacao_id: UUID, payload: ValidacaoReivin
             },
         ).execute()
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel validar a resposta.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel validar a resposta.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ReivindicaÃ§Ã£o nÃ£o encontrada.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reivindicacao nao encontrada.")
 
     sala_chat_id: str | None = None
     if payload.aprovada:
@@ -441,11 +479,15 @@ async def listar_mensagens_chat(sala_chat_id: UUID, usuario_id: UUID) -> list[Me
 
 
 @router.post("/salas/{sala_chat_id}/mensagens", response_model=MensagemChatOut, status_code=status.HTTP_201_CREATED)
-async def enviar_mensagem_chat(sala_chat_id: UUID, payload: MensagemChatCreate) -> MensagemChatOut:
+async def enviar_mensagem_chat(
+    sala_chat_id: UUID,
+    payload: MensagemChatCreate,
+    background_tasks: BackgroundTasks,
+) -> MensagemChatOut:
     await _buscar_usuario_verificado(payload.usuario_id)
     sala = await _buscar_sala_e_participacao(sala_chat_id, payload.usuario_id)
     if sala["status"] == "bloqueado":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="O chat ainda estÃ¡ bloqueado pelo desafio do dono.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="O chat ainda esta bloqueado pelo desafio do dono.")
 
     mensagem = payload.mensagem.strip()
     scan = scan_chat_message(mensagem)
@@ -479,7 +521,43 @@ async def enviar_mensagem_chat(sala_chat_id: UUID, payload: MensagemChatCreate) 
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel persistir a mensagem.")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel persistir a mensagem.")
+
+    await (
+        supabase.table("salas_chat")
+        .update({"atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("id", str(sala_chat_id))
+        .execute()
+    )
+    if destinatario:
+        await (
+            supabase.table("notificacoes")
+            .insert(
+                {
+                    "usuario_id": str(destinatario),
+                    "tipo": "chat",
+                    "titulo": "Nova mensagem no chat seguro",
+                    "mensagem": "Voce recebeu uma nova mensagem sobre um item no Foundy.",
+                    "item_achado_id": sala["item_achado_id"],
+                    "sala_chat_id": str(sala_chat_id),
+                }
+            )
+            .execute()
+        )
+        destinatario_email = await (
+            supabase.table("usuarios")
+            .select("email,aceita_notificacoes_email")
+            .eq("id", str(destinatario))
+            .limit(1)
+            .execute()
+        )
+        if destinatario_email.data and destinatario_email.data[0].get("aceita_notificacoes_email"):
+            background_tasks.add_task(
+                send_notification_email,
+                destinatario_email.data[0]["email"],
+                "Nova mensagem no Foundy",
+                "Voce recebeu uma nova mensagem no chat seguro do Foundy. Acesse sua conta para responder.",
+            )
 
     if scan.flagged:
         await (
@@ -497,8 +575,8 @@ async def enviar_mensagem_chat(sala_chat_id: UUID, payload: MensagemChatCreate) 
                     {
                         "usuario_id": participante,
                         "tipo": "chat",
-                        "titulo": "PossÃ­vel extorsÃ£o detectada",
-                        "mensagem": "Detectamos termos financeiros suspeitos na conversa. Use o botÃ£o Denunciar ExtorsÃ£o.",
+                        "titulo": "Possivel extorsao detectada",
+                        "mensagem": "Detectamos termos financeiros suspeitos na conversa. Use o botao Denunciar Extorsao.",
                         "item_achado_id": sala["item_achado_id"],
                     }
                 )
@@ -550,8 +628,8 @@ async def denunciar_extorsao(
             {
                 "usuario_id": str(payload.usuario_id),
                 "tipo": "sistema",
-                "titulo": "DenÃºncia registrada",
-                "mensagem": "Recebemos sua denÃºncia e encaminhamos para revisÃ£o prioritÃ¡ria.",
+                "titulo": "Denuncia registrada",
+                "mensagem": "Recebemos sua denuncia e encaminhamos para revisao prioritaria.",
                 "item_achado_id": sala["item_achado_id"],
             }
         )
@@ -559,20 +637,20 @@ async def denunciar_extorsao(
     )
     background_tasks.add_task(
         send_support_email,
-        "Denúncia de extorsão no Foundy",
+        "Denuncia de extorsao no Foundy",
         (
-            "Uma denúncia de extorsão foi registrada no Foundy.\n\n"
+            "Uma denuncia de extorsao foi registrada no Foundy.\n\n"
             f"Sala de chat: {sala_chat_id}\n"
             f"Item achado: {sala['item_achado_id']}\n"
-            f"Usuário denunciante: {payload.usuario_id}\n"
-            f"Mensagem denunciada: {payload.mensagem_chat_id or 'não informada'}\n"
+            f"Usuario denunciante: {payload.usuario_id}\n"
+            f"Mensagem denunciada: {payload.mensagem_chat_id or 'nao informada'}\n"
             f"Motivo informado: {payload.motivo.strip()}\n\n"
-            "Acesse o painel/Supabase para revisar a sala e aplicar as medidas necessárias."
+            "Acesse o painel/Supabase para revisar a sala e aplicar as medidas necessarias."
         ),
     )
     return {
         "mensagem": (
-            "Denúncia de extorsão enviada com sucesso. "
+            "Denuncia de extorsao enviada com sucesso. "
             f"Nosso suporte foi avisado em {settings.support_email}."
         )
     }
@@ -591,7 +669,7 @@ async def criar_checkout_lost_boost(item_id: UUID, payload: LostBoostCheckoutCre
         .execute()
     )
     if not item.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nÃ£o encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
     if item.data[0].get("usuario_id") != str(payload.usuario_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -617,7 +695,7 @@ async def criar_checkout_lost_boost(item_id: UUID, payload: LostBoostCheckoutCre
     )
 
     return {
-        "mensagem": "CobranÃ§a PIX simulada criada. Use o callback de teste para confirmar pagamento.",
+        "mensagem": "Cobranca PIX simulada criada. Use o callback de teste para confirmar pagamento.",
         "pix_referencia": pix_reference,
         "expira_em": expires_at.isoformat(),
     }
@@ -634,11 +712,11 @@ async def simular_callback_pix(payload: PixCallbackSimulation) -> dict[str, str]
         .execute()
     )
     if not pagamento.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ReferÃªncia PIX nÃ£o encontrada.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Referencia PIX nao encontrada.")
 
     registro = pagamento.data[0]
     if registro["status"] == "pago":
-        return {"mensagem": "Pagamento jÃ¡ confirmado anteriormente."}
+        return {"mensagem": "Pagamento ja confirmado anteriormente."}
 
     now_iso = datetime.now(timezone.utc).isoformat()
     premium_until = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
@@ -677,10 +755,10 @@ async def atualizar_item_achado(item_id: UUID, payload: ItemAchadoUpdate) -> dic
     try:
         response = await supabase.table("itens_achados").update(updates).eq("id", str(item_id)).select("id").execute()
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel atualizar o item.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel atualizar o item.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nÃ£o encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
 
     return {"mensagem": "Item atualizado com sucesso."}
 
@@ -697,8 +775,8 @@ async def arquivar_item_achado(item_id: UUID) -> None:
             .execute()
         )
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel arquivar o item.") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel arquivar o item.") from exc
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nÃ£o encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
 

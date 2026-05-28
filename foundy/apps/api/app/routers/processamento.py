@@ -18,10 +18,14 @@ async def processar_imagem(
     try:
         processed, tags, motivos = blur_faces_and_sensitive_regions(content, texto_extraido)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Imagem inválida ou não processável.") from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Imagem invalida ou nao processavel.") from exc
+
+    hashtags = [tag if tag.startswith("#") else f"#{tag}" for tag in tags]
     return {
         "mensagem": "Imagem processada com filtros de privacidade.",
         "imagem_webp_base64": to_base64_webp(processed),
         "tags_ia": tags,
+        "hashtags_ia": hashtags,
+        "texto_publico_padronizado": None,
         "motivos_privacidade": motivos,
     }

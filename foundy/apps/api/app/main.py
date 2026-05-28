@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.pool import close_db, connect_to_db
 from app.db.supabase_client import close_supabase, init_supabase
-from app.routers import itens_achados, karma, notificacoes, processamento, usuarios
+from app.routers import admin, itens_achados, karma, notificacoes, painel, processamento, usuarios
 
 
 @asynccontextmanager
@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Foundy API",
     description="API privada da plataforma Foundy.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -34,11 +34,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(usuarios.router, prefix="/usuarios", tags=["Usuários"])
+app.include_router(usuarios.router, prefix="/usuarios", tags=["Usuarios"])
 app.include_router(itens_achados.router, prefix="/itens-achados", tags=["Itens Achados"])
-app.include_router(notificacoes.router, prefix="/notificacoes", tags=["Notificações"])
+app.include_router(notificacoes.router, prefix="/notificacoes", tags=["Notificacoes"])
 app.include_router(processamento.router, prefix="/processamento", tags=["Processamento de Imagem"])
 app.include_router(karma.router, prefix="/karma", tags=["Pontos de Luz"])
+app.include_router(painel.router, prefix="/painel", tags=["Painel do Usuario"])
+app.include_router(admin.router, prefix="/admin", tags=["Administracao"])
 
 
 @app.get("/health", tags=["Sistema"])

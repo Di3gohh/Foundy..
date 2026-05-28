@@ -13,33 +13,30 @@ class ScanResult:
 ILLICIT_TERMS = {
     "arma",
     "municao",
-    "munição",
     "droga",
     "drogas",
     "cocaina",
-    "cocaína",
     "maconha",
     "documento falso",
+    "medicamento controlado",
+    "substancia ilicita",
 }
 
 EXTORTION_TERMS = {
     "pix",
     "pagamento",
     "pagar",
+    "cobranca",
     "resgate",
     "taxa",
     "dinheiro",
     "transferencia",
-    "transferência",
     "recompensa obrigatoria",
-    "recompensa obrigatória",
 }
 
 COERCION_TERMS = {
     "so devolvo",
-    "só devolvo",
     "nao devolvo",
-    "não devolvo",
     "para devolver",
     "se pagar",
     "manda o pix",
@@ -57,22 +54,26 @@ def normalize_text(value: str) -> str:
     return ascii_text.casefold()
 
 
+def censor_sensitive_text(value: str) -> str:
+    value = EMAIL_RE.sub("[e-mail ocultado]", value)
+    value = CPF_RE.sub("[documento ocultado]", value)
+    value = PHONE_RE.sub("[telefone ocultado]", value)
+    return value
+
+
 def scan_item_text(title: str, description: str) -> ScanResult:
     original = f"{title}\n{description}"
     normalized = normalize_text(original)
     reasons: list[str] = []
 
     if any(term in normalized for term in {normalize_text(term) for term in ILLICIT_TERMS}):
-        reasons.append("O texto contém termos não permitidos para publicação.")
-
+        reasons.append("O texto contem termos nao permitidos para publicacao.")
     if EMAIL_RE.search(original):
-        reasons.append("Remova e-mails da descrição pública.")
-
+        reasons.append("Remova e-mails da descricao publica.")
     if CPF_RE.search(original):
-        reasons.append("Remova CPF ou documentos completos da descrição pública.")
-
+        reasons.append("Remova CPF ou documentos completos da descricao publica.")
     if PHONE_RE.search(original):
-        reasons.append("Remova telefones da descrição pública.")
+        reasons.append("Remova telefones da descricao publica.")
 
     return ScanResult(blocked=bool(reasons), flagged=bool(reasons), reasons=reasons)
 
@@ -86,7 +87,7 @@ def scan_chat_message(body: str) -> ScanResult:
         return ScanResult(
             blocked=False,
             flagged=True,
-            reasons=["Mensagem sinalizada por possível extorsão financeira."],
+            reasons=["Mensagem sinalizada por possivel extorsao financeira."],
         )
 
     return ScanResult(blocked=False, flagged=False, reasons=[])

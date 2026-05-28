@@ -241,6 +241,94 @@ select:focus-visible {
   animation: foundyModalIn 180ms ease both;
 }
 
+.foundy-icon-button {
+  display: inline-grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  place-items: center;
+  border: 1px solid var(--foundy-border);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--foundy-background) 76%, transparent);
+  color: var(--foundy-foreground);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.foundy-icon-button:hover,
+.foundy-user-button:hover {
+  border-color: color-mix(in srgb, var(--foundy-blue) 70%, var(--foundy-border));
+  background: color-mix(in srgb, var(--foundy-blue) 12%, var(--foundy-background));
+}
+
+.foundy-badge {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
+  display: grid;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  place-items: center;
+  border: 2px solid var(--foundy-surface);
+  border-radius: 999px;
+  background: #ef4444;
+  color: white;
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.foundy-chat-fab {
+  animation: foundyChatBreathe 3.4s ease-in-out infinite;
+}
+
+.foundy-input {
+  width: 100%;
+  border: 1px solid var(--foundy-border);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--foundy-background) 86%, black);
+  padding: 0.85rem 1rem;
+  color: var(--foundy-foreground);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.foundy-input::placeholder {
+  color: color-mix(in srgb, var(--foundy-muted) 70%, transparent);
+}
+
+.foundy-input:focus {
+  border-color: color-mix(in srgb, var(--foundy-blue) 80%, var(--foundy-border));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--foundy-blue) 16%, transparent);
+}
+
+.foundy-attention {
+  animation: foundyAttention 4.2s ease-in-out infinite;
+}
+
+.foundy-comic-card {
+  position: relative;
+  overflow: hidden;
+  transform-origin: center;
+  animation: foundyCardPop 520ms ease both;
+}
+
+.foundy-comic-card::after {
+  content: '';
+  position: absolute;
+  right: -2rem;
+  bottom: -2rem;
+  width: 6rem;
+  height: 6rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foundy-green) 14%, transparent);
+  filter: blur(18px);
+}
+
 @keyframes foundyPulse {
   0%,
   100% {
@@ -250,6 +338,39 @@ select:focus-visible {
   50% {
     transform: scale(1.22);
     opacity: 0.18;
+  }
+}
+
+@keyframes foundyAttention {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+    transform: translateY(0);
+  }
+  50% {
+    filter: drop-shadow(0 0 14px color-mix(in srgb, var(--foundy-green) 32%, transparent));
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes foundyChatBreathe {
+  0%,
+  100% {
+    box-shadow: 0 20px 55px color-mix(in srgb, var(--foundy-green) 26%, transparent);
+  }
+  50% {
+    box-shadow: 0 28px 70px color-mix(in srgb, var(--foundy-green) 44%, transparent);
+  }
+}
+
+@keyframes foundyCardPop {
+  from {
+    transform: translateY(10px) rotate(-0.5deg);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) rotate(0);
+    opacity: 1;
   }
 }
 

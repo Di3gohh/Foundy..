@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from postgrest.exceptions import APIError
 
+from app.core.config import settings
 from app.core.security import hash_password, verify_password
 from app.db.supabase_client import get_supabase
 from app.services.email_service import has_smtp_settings, send_verification_email
@@ -17,7 +18,10 @@ router = APIRouter()
 class UsuarioCadastro(BaseModel):
     nome: str = Field(min_length=2, max_length=80)
     email: EmailStr
-    senha: str = Field(min_length=10, max_length=128)
+    senha: str = Field(min_length=8, max_length=128)
+    maior_de_idade: bool = False
+    aceitou_termos: bool = False
+    aceita_notificacoes_email: bool = True
 
 
 class UsuarioLogin(BaseModel):
@@ -27,6 +31,13 @@ class UsuarioLogin(BaseModel):
 
 class ConfirmarEmail(BaseModel):
     token: str = Field(min_length=20, max_length=160)
+
+
+class UsuarioPerfilUpdate(BaseModel):
+    nome: str | None = Field(default=None, min_length=2, max_length=80)
+    foto_url: str | None = Field(default=None, max_length=5_000_000)
+    ocupacao: str | None = Field(default=None, max_length=120)
+    aceita_notificacoes_email: bool | None = None
 
 
 class HubVerificadoCreate(BaseModel):
@@ -40,50 +51,108 @@ class HubVerificadoCreate(BaseModel):
 
 def _badge_by_karma(points: int) -> str:
     if points >= 250:
-        return "HerÃ³i Local"
+        return "Heroi Local"
     if points >= 100:
-        return "CidadÃ£o de Ouro"
+        return "Cidadao de Ouro"
     if points >= 25:
-        return "GuardiÃ£o do Bairro"
-    return "Novo GuardiÃ£o"
+        return "Guardiao do Bairro"
+    return "Novo Guardiao"
+
+
+def _is_admin(email: str, papel: str | None = None) -> bool:
+    return email.lower() in settings.admin_emails or papel == "admin"
+
+
+def _session_payload(usuario: dict) -> dict[str, str]:
+    pontos = int(usuario.get("pontos_luz") or 0)
+    email = usuario.get("email") or ""
+    return {
+        "mensagem": "Login realizado com sucesso.",
+        "usuario_id": str(UUID(usuario["id"])),
+        "nome": usuario["nome"],
+        "nivel_perfil": usuario.get("nivel_perfil") or _badge_by_karma(pontos),
+        "pontos_luz": str(pontos),
+        "badge_publica": _badge_by_karma(pontos),
+        "foto_url": usuario.get("foto_url") or "",
+        "ocupacao": usuario.get("ocupacao") or "",
+        "aceita_notificacoes_email": str(bool(usuario.get("aceita_notificacoes_email", True))).lower(),
+        "is_admin": str(_is_admin(email, usuario.get("papel"))).lower(),
+    }
 
 
 @router.post("/cadastrar", status_code=status.HTTP_201_CREATED)
 async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: BackgroundTasks) -> dict[str, object]:
+    if not payload.maior_de_idade:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O Foundy e permitido apenas para maiores de 18 anos.",
+        )
+    if not payload.aceitou_termos:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Leia e aceite os Termos de Uso e a Politica de Privacidade para criar sua conta.",
+        )
+
     supabase = get_supabase()
+    email_normalizado = payload.email.lower()
+
+    usuario_existente = await (
+        supabase.table("usuarios")
+        .select("id")
+        .eq("email", email_normalizado)
+        .is_("removido_em", "null")
+        .limit(1)
+        .execute()
+    )
+    if usuario_existente.data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este e-mail ja esta cadastrado. Clique em Entrar ou use outro e-mail.",
+        )
+
     smtp_configurado = has_smtp_settings()
     token = secrets.token_urlsafe(32) if smtp_configurado else None
     expira_em = datetime.now(timezone.utc) + timedelta(hours=24) if smtp_configurado else None
     email_verificado_em = None if smtp_configurado else datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     try:
         await supabase.table("usuarios").insert(
             {
                 "nome": payload.nome.strip(),
-                "email": payload.email.lower(),
+                "email": email_normalizado,
                 "senha_hash": hash_password(payload.senha),
                 "email_verificacao_token": token,
                 "email_verificacao_expira_em": expira_em.isoformat() if expira_em else None,
                 "email_verificado_em": email_verificado_em,
-                "nivel_perfil": "Novo GuardiÃ£o",
+                "nivel_perfil": "Novo Guardiao",
                 "pontos_luz": 0,
+                "foto_url": None,
+                "ocupacao": None,
+                "aceita_notificacoes_email": payload.aceita_notificacoes_email,
+                "termos_aceitos_em": now_iso,
+                "maioridade_confirmada_em": now_iso,
+                "papel": "admin" if _is_admin(email_normalizado) else "usuario",
             }
         ).execute()
     except APIError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="NÃ£o foi possÃ­vel cadastrar este e-mail.") from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Nao foi possivel cadastrar este e-mail. Verifique se ele ja foi usado anteriormente.",
+        ) from exc
 
     if smtp_configurado and token:
-        background_tasks.add_task(send_verification_email, payload.email.lower(), token)
+        background_tasks.add_task(send_verification_email, email_normalizado, token)
         return {
-            "mensagem": "Cadastro criado. Enviamos um e-mail de confirmação.",
+            "mensagem": "Cadastro criado. Enviamos um e-mail de confirmacao.",
             "email_verificado": False,
             "login_liberado": False,
         }
 
     return {
         "mensagem": (
-            "Conta criada e verificada automaticamente para testes, pois o envio de e-mail SMTP ainda não está configurado. "
-            "Você já pode entrar e testar os recursos protegidos."
+            "Conta criada e verificada automaticamente para testes, pois o envio de e-mail SMTP ainda nao esta configurado. "
+            "Voce ja pode entrar e testar os recursos protegidos."
         ),
         "email_verificado": True,
         "login_liberado": True,
@@ -102,7 +171,7 @@ async def confirmar_email(payload: ConfirmarEmail) -> dict[str, str]:
     )
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token invÃ¡lido ou jÃ¡ utilizado.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token invalido ou ja utilizado.")
 
     usuario = response.data[0]
     expira_em = datetime.fromisoformat(usuario["email_verificacao_expira_em"].replace("Z", "+00:00"))
@@ -130,28 +199,56 @@ async def entrar(payload: UsuarioLogin) -> dict[str, str]:
     supabase = get_supabase()
     response = await (
         supabase.table("usuarios")
-        .select("id,nome,email,senha_hash,email_verificado_em,nivel_perfil,pontos_luz")
+        .select(
+            "id,nome,email,senha_hash,email_verificado_em,nivel_perfil,pontos_luz,"
+            "foto_url,ocupacao,aceita_notificacoes_email,papel,banido_ate,banimento_motivo"
+        )
         .eq("email", payload.email.lower())
         .is_("removido_em", "null")
         .execute()
     )
 
     if not response.data or not verify_password(payload.senha, response.data[0]["senha_hash"]):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha invÃ¡lidos.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha invalidos.")
 
     usuario = response.data[0]
+    if usuario.get("banido_ate"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Conta temporariamente banida. Motivo: {usuario.get('banimento_motivo') or 'violacao dos termos.'}",
+        )
     if usuario["email_verificado_em"] is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Confirme seu e-mail antes de continuar.")
 
-    pontos = int(usuario["pontos_luz"] or 0)
-    return {
-        "mensagem": "Login realizado com sucesso.",
-        "usuario_id": str(UUID(usuario["id"])),
-        "nome": usuario["nome"],
-        "nivel_perfil": usuario["nivel_perfil"],
-        "pontos_luz": str(pontos),
-        "badge_publica": _badge_by_karma(pontos),
-    }
+    return _session_payload(usuario)
+
+
+@router.patch("/{usuario_id}/perfil")
+async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> dict[str, str]:
+    updates = payload.model_dump(exclude_unset=True)
+    if "nome" in updates and updates["nome"] is not None:
+        updates["nome"] = updates["nome"].strip()
+    if "ocupacao" in updates and updates["ocupacao"] is not None:
+        updates["ocupacao"] = updates["ocupacao"].strip()
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Informe ao menos um dado do perfil.")
+
+    updates["atualizado_em"] = datetime.now(timezone.utc).isoformat()
+    supabase = get_supabase()
+    response = await (
+        supabase.table("usuarios")
+        .update(updates)
+        .eq("id", str(usuario_id))
+        .is_("removido_em", "null")
+        .select("id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel")
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado.")
+
+    result = _session_payload(response.data[0])
+    result["mensagem"] = "Perfil atualizado com seguranca."
+    return result
 
 
 @router.get("/{usuario_id}/perfil-publico")
@@ -159,14 +256,14 @@ async def perfil_publico(usuario_id: UUID) -> dict[str, object]:
     supabase = get_supabase()
     response = await (
         supabase.table("usuarios")
-        .select("id,nome,nivel_perfil,pontos_luz")
+        .select("id,nome,nivel_perfil,pontos_luz,foto_url,ocupacao")
         .eq("id", str(usuario_id))
         .is_("removido_em", "null")
         .limit(1)
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="UsuÃ¡rio nÃ£o encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado.")
 
     usuario = response.data[0]
     pontos = int(usuario.get("pontos_luz") or 0)
@@ -176,6 +273,8 @@ async def perfil_publico(usuario_id: UUID) -> dict[str, object]:
         "pontos_luz": pontos,
         "nivel_perfil": usuario.get("nivel_perfil") or _badge_by_karma(pontos),
         "badge_publica": _badge_by_karma(pontos),
+        "foto_url": usuario.get("foto_url"),
+        "ocupacao": usuario.get("ocupacao"),
     }
 
 
@@ -190,7 +289,7 @@ async def criar_hub_verificado(payload: HubVerificadoCreate) -> dict[str, str]:
         .execute()
     )
     if not usuario.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="UsuÃ¡rio nÃ£o encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado.")
     if usuario.data[0].get("email_verificado_em") is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Confirme o e-mail antes de solicitar o hub.")
 
@@ -211,9 +310,9 @@ async def criar_hub_verificado(payload: HubVerificadoCreate) -> dict[str, str]:
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="NÃ£o foi possÃ­vel registrar o hub verificado.")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel registrar o hub verificado.")
 
-    return {"mensagem": "SolicitaÃ§Ã£o de Hub Verificado recebida.", "hub_id": response.data[0]["id"]}
+    return {"mensagem": "Solicitacao de Hub Verificado recebida.", "hub_id": response.data[0]["id"]}
 
 
 @router.get("/hubs-verificados/lista")
@@ -227,4 +326,3 @@ async def listar_hubs_verificados() -> list[dict]:
         .execute()
     )
     return response.data
-

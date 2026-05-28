@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_from_email: str = Field(default="foundy.company@gmail.com", alias="SMTP_FROM_EMAIL")
     support_email: str = Field(default="foundy.company@gmail.com", alias="SUPPORT_EMAIL")
+    admin_emails: list[str] = Field(default_factory=lambda: ["diego.corazza9@gmail.com"], alias="ADMIN_EMAILS")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -31,6 +32,13 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("admin_emails", mode="before")
+    @classmethod
+    def split_admin_emails(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            return [email.strip().lower() for email in value.split(",") if email.strip()]
+        return [email.lower() for email in value]
 
     @property
     def supabase_backend_key(self) -> str | None:

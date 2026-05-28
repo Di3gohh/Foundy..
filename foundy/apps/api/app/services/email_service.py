@@ -13,16 +13,20 @@ async def send_verification_email(to_email: str, token: str) -> bool:
     link = f"{settings.app_public_url.rstrip('/')}/verificar-email?token={token}"
     subject = "Confirme seu e-mail na Foundy"
     body = (
-        "Olá!\n\n"
+        "Ola!\n\n"
         "Para publicar ou reivindicar itens na Foundy, confirme seu e-mail acessando o link abaixo:\n\n"
         f"{link}\n\n"
-        "Se você não pediu isso, ignore esta mensagem."
+        "Se voce nao pediu isso, ignore esta mensagem."
     )
     return await _send_email(to_email=to_email, subject=subject, body=body)
 
 
 async def send_support_email(subject: str, body: str) -> bool:
     return await _send_email(to_email=settings.support_email, subject=subject, body=body)
+
+
+async def send_notification_email(to_email: str, subject: str, body: str) -> bool:
+    return await _send_email(to_email=to_email, subject=subject, body=body)
 
 
 async def _send_email(to_email: str, subject: str, body: str) -> bool:

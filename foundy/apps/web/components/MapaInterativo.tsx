@@ -6,6 +6,7 @@ import { useEffect } from 'react'
 import type { ItemAchado } from '@/lib/foundy-api'
 
 const CENTRO_PADRAO: [number, number] = [-23.55052, -46.633308]
+type GeoPoint = { latitude: number; longitude: number }
 
 function FocoMapa({ item }: { item: ItemAchado | null }) {
   const map = useMap()
@@ -18,17 +19,32 @@ function FocoMapa({ item }: { item: ItemAchado | null }) {
   return null
 }
 
+function FocoUsuario({ userLocation }: { userLocation: GeoPoint | null }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!userLocation) return
+    map.flyTo([userLocation.latitude, userLocation.longitude], 14, { duration: 0.8 })
+  }, [map, userLocation])
+
+  return null
+}
+
 export default function MapaInterativo({
   itens,
   itemSelecionado,
   onSelecionarItem,
+  userLocation,
 }: {
   itens: ItemAchado[]
   itemSelecionado: ItemAchado | null
   onSelecionarItem: (item: ItemAchado) => void
+  userLocation?: GeoPoint | null
 }) {
   const centro: [number, number] = itemSelecionado
     ? [itemSelecionado.latitude_aproximada, itemSelecionado.longitude_aproximada]
+    : userLocation
+      ? [userLocation.latitude, userLocation.longitude]
     : CENTRO_PADRAO
 
   return (
@@ -38,6 +54,16 @@ export default function MapaInterativo({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <FocoMapa item={itemSelecionado} />
+      <FocoUsuario userLocation={userLocation ?? null} />
+      {userLocation ? (
+        <Circle
+          center={[userLocation.latitude, userLocation.longitude]}
+          pathOptions={{ color: '#3fd18f', fillColor: '#3fd18f', fillOpacity: 0.14, weight: 2 }}
+          radius={350}
+        >
+          <Popup>Sua regiao aproximada</Popup>
+        </Circle>
+      ) : null}
       {itens.map((item) => (
         <Circle
           center={[item.latitude_aproximada, item.longitude_aproximada]}
