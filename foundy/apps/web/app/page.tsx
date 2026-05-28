@@ -296,6 +296,8 @@ export default function Home() {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     if (!supabaseUrl || !supabaseKey) return
+    const realtimeSupabaseUrl: string = supabaseUrl
+    const realtimeSupabaseKey: string = supabaseKey
 
     let cleanup: (() => void) | undefined
     let cancelled = false
@@ -304,7 +306,7 @@ export default function Home() {
       try {
         const { createClient } = await import('@supabase/supabase-js')
         if (cancelled || !salaChatId || !sessao) return
-        const client = createClient(supabaseUrl, supabaseKey)
+        const client = createClient(realtimeSupabaseUrl, realtimeSupabaseKey)
         const channel = client
           .channel(`foundy-chat-${salaChatId}`)
           .on(
