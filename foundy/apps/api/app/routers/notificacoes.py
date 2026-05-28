@@ -151,7 +151,7 @@ async def listar_alertas_perdidos_proximos(
             {
                 "latitude_usuario": latitude,
                 "longitude_usuario": longitude,
-                "raio_metros": raio_metros,
+                "raio_busca_metros": raio_metros,
                 "limite_resultados": limite,
             },
         ).execute()
