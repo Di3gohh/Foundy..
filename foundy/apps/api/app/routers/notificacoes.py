@@ -11,6 +11,7 @@ from app.core.geo import mask_coordinates
 from app.core.geo import validate_coordinates
 from app.db.supabase_client import get_supabase
 from app.services.email_service import send_notification_email
+from app.services.storage_service import store_public_image_if_needed
 
 
 router = APIRouter()
@@ -70,7 +71,10 @@ async def _buscar_usuario_verificado(usuario_id: UUID) -> dict:
 def _is_future(value: str | None) -> bool:
     if not value:
         return False
-    return datetime.fromisoformat(value.replace("Z", "+00:00")) > datetime.now(timezone.utc)
+    normalized = value.replace(" ", "T").replace("Z", "+00:00")
+    if normalized.endswith("+00"):
+        normalized = f"{normalized}:00"
+    return datetime.fromisoformat(normalized) > datetime.now(timezone.utc)
 
 
 def _ensure_chat_allowed(usuario: dict) -> None:
@@ -94,6 +98,11 @@ async def criar_alerta_perdido(payload: AlertaPerdidoCreate) -> dict[str, str]:
     titulo = payload.titulo.strip()
     descricao = payload.descricao.strip()
     imagem_publica = None if payload.categoria == "documentos" else payload.imagem_url
+    if imagem_publica:
+        try:
+            imagem_publica = await store_public_image_if_needed(imagem_publica, f"perdas/{payload.usuario_id}")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if payload.categoria == "documentos":
         titulo = censor_sensitive_text(titulo)
         descricao = censor_sensitive_text(descricao)

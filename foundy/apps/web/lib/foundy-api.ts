@@ -41,6 +41,12 @@ export type FoundySession = {
   empresa_endereco_publico?: string
   empresa_cidade?: string
   empresa_uf?: string
+  banido_permanente?: string
+  banido_ate?: string
+  banimento_motivo?: string
+  chat_banido_permanente?: string
+  chat_banido_ate?: string
+  chat_banimento_motivo?: string
 }
 
 export type NotificationItem = {
@@ -129,6 +135,7 @@ export type EmpresaCatalogoItem = {
   titulo: string
   descricao: string
   categoria: ItemCategory
+  subcategoria?: string | null
   codigo_interno?: string | null
   local_armazenamento?: string | null
   imagem_url?: string | null
@@ -456,6 +463,8 @@ export async function cadastrarUsuario(payload: {
   empresa_cidade?: string
   empresa_uf?: string
   empresa_catalogo_publico?: boolean
+  empresa_cnpj?: string
+  empresa_cep?: string
 }) {
   return requestJson<{ mensagem: string; email_verificado?: boolean; login_liberado?: boolean }>(
     '/usuarios/cadastrar',
@@ -494,6 +503,7 @@ export async function criarItemCatalogoEmpresa(empresaId: string, payload: {
   titulo: string
   descricao: string
   categoria: ItemCategory
+  subcategoria?: string | null
   codigo_interno?: string
   local_armazenamento?: string
   imagem_url?: string | null
@@ -666,6 +676,18 @@ export async function adminDesbanirUsuario(adminUsuarioId: string, usuarioId: st
       body: JSON.stringify({ admin_usuario_id: adminUsuarioId, motivo }),
     },
     'Não foi possível desbanir o usuário.',
+  )
+}
+
+export async function adminResolverDenuncia(adminUsuarioId: string, denunciaId: string, denunciaTipo: 'chat' | 'post', motivo: string) {
+  return requestJson<{ mensagem: string }>(
+    `/admin/denuncias/${denunciaId}/resolver`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, denuncia_tipo: denunciaTipo, motivo }),
+    },
+    'Não foi possível marcar a denúncia como resolvida.',
   )
 }
 

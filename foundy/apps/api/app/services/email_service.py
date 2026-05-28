@@ -1,5 +1,8 @@
 import asyncio
+import json
 import smtplib
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
 
 from app.core.config import settings
@@ -7,6 +10,10 @@ from app.core.config import settings
 
 def has_smtp_settings() -> bool:
     return bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
+
+
+def has_resend_settings() -> bool:
+    return bool(settings.resend_api_key)
 
 
 async def send_verification_email(to_email: str, token: str) -> bool:
@@ -30,6 +37,8 @@ async def send_notification_email(to_email: str, subject: str, body: str) -> boo
 
 
 async def _send_email(to_email: str, subject: str, body: str) -> bool:
+    if has_resend_settings():
+        return await _send_resend_email(to_email=to_email, subject=subject, body=body)
     if not has_smtp_settings():
         return False
 
@@ -41,6 +50,29 @@ async def _send_email(to_email: str, subject: str, body: str) -> bool:
 
     await asyncio.to_thread(_send_message, message)
     return True
+
+
+async def _send_resend_email(to_email: str, subject: str, body: str) -> bool:
+    payload = {
+        "from": settings.resend_from_email or settings.smtp_from_email,
+        "to": [to_email],
+        "subject": subject,
+        "text": body,
+    }
+    request = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {settings.resend_api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        await asyncio.to_thread(lambda: urllib.request.urlopen(request, timeout=12).read())
+        return True
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        return False
 
 
 def _send_message(message: EmailMessage) -> None:

@@ -21,8 +21,13 @@ class Settings(BaseSettings):
     smtp_user: str | None = Field(default=None, alias="SMTP_USER")
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_from_email: str = Field(default="foundy.company@gmail.com", alias="SMTP_FROM_EMAIL")
+    resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
+    resend_from_email: str | None = Field(default=None, alias="RESEND_FROM_EMAIL")
     support_email: str = Field(default="foundy.company@gmail.com", alias="SUPPORT_EMAIL")
     admin_emails: list[str] = Field(default_factory=lambda: ["foundy.company@gmail.com"], alias="ADMIN_EMAILS")
+    supabase_storage_bucket: str = Field(default="foundy-images", alias="SUPABASE_STORAGE_BUCKET")
+    storage_max_image_bytes: int = Field(default=5_242_880, alias="STORAGE_MAX_IMAGE_BYTES")
+    ip_hash_secret: str | None = Field(default=None, alias="IP_HASH_SECRET")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

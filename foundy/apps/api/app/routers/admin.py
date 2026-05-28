@@ -25,6 +25,10 @@ class BanimentoAction(AdminAction):
     tipo: Literal["conta", "chat"] = "conta"
 
 
+class ResolverDenunciaAction(AdminAction):
+    denuncia_tipo: Literal["chat", "post"]
+
+
 async def _ensure_admin(admin_usuario_id: UUID) -> dict:
     supabase = get_supabase()
     response = await (
@@ -49,7 +53,12 @@ def _is_active_ban(usuario: dict) -> bool:
     now = datetime.now(timezone.utc)
     for field in ("banido_ate", "chat_banido_ate"):
         value = usuario.get(field)
-        if value and datetime.fromisoformat(value.replace("Z", "+00:00")) > now:
+        if not value:
+            continue
+        normalized = value.replace(" ", "T").replace("Z", "+00:00")
+        if normalized.endswith("+00"):
+            normalized = f"{normalized}:00"
+        if datetime.fromisoformat(normalized) > now:
             return True
     return False
 
@@ -86,6 +95,8 @@ async def _resolver_denuncia(payload: AdminAction, status_denuncia: str, decisao
     if not payload.denuncia_id or not payload.denuncia_tipo:
         return None
     table = "denuncias_extorsao" if payload.denuncia_tipo == "chat" else "denuncias_posts"
+    if table == "denuncias_extorsao" and status_denuncia in {"avisado", "banido", "resolvido"}:
+        status_denuncia = "resolvida"
     response = await (
         get_supabase()
         .table(table)
@@ -128,7 +139,8 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
             "id,nome,email,pontos_luz,nivel_perfil,foto_url,ocupacao,tipo_conta,empresa_nome,empresa_descricao,"
             "empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_verificada,empresa_catalogo_publico,"
             "banido_ate,banimento_motivo,banimento_tipo,banido_permanente,chat_banido_ate,chat_banimento_motivo,"
-            "chat_banido_permanente,ultimo_post_em,ultimo_aviso_moderacao,ultimo_aviso_em,criado_em,atualizado_em"
+            "chat_banido_permanente,ultimo_post_em,ultimo_aviso_moderacao,ultimo_aviso_em,criado_em,atualizado_em,"
+            "empresa_cnpj,empresa_cep,empresa_verificacao_status,ultimo_ip_hash"
         )
         .is_("removido_em", "null")
         .order("criado_em", desc=True)
@@ -308,6 +320,31 @@ async def admin_banir_usuario(usuario_id: UUID, payload: BanimentoAction) -> dic
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
 
     await _registrar_evento(evento, "usuario", str(usuario_id), payload.admin_usuario_id, payload.motivo)
+    if payload.tipo == "conta":
+        usuario_alvo = await (
+            supabase.table("usuarios")
+            .select("ultimo_ip_hash")
+            .eq("id", str(usuario_id))
+            .limit(1)
+            .execute()
+        )
+        ultimo_ip_hash = usuario_alvo.data[0].get("ultimo_ip_hash") if usuario_alvo.data else None
+        if ultimo_ip_hash:
+            await (
+                supabase.table("ips_bloqueados")
+                .upsert(
+                    {
+                        "ip_hash": ultimo_ip_hash,
+                        "usuario_id": str(usuario_id),
+                        "motivo": payload.motivo.strip(),
+                        "banido_ate": banido_ate.isoformat() if banido_ate else None,
+                        "permanente": payload.permanente,
+                        "admin_usuario_id": str(payload.admin_usuario_id),
+                    },
+                    on_conflict="ip_hash",
+                )
+                .execute()
+            )
     await _notificar(
         str(usuario_id),
         titulo,
@@ -322,6 +359,20 @@ async def admin_banir_usuario(usuario_id: UUID, payload: BanimentoAction) -> dic
     )
 
     return {"mensagem": "Medida aplicada e usuários notificados."}
+
+
+@router.post("/denuncias/{denuncia_id}/resolver")
+async def admin_resolver_denuncia(denuncia_id: UUID, payload: ResolverDenunciaAction) -> dict[str, str]:
+    await _ensure_admin(payload.admin_usuario_id)
+    payload.denuncia_id = denuncia_id
+    denunciante_id = await _resolver_denuncia(payload, "resolvido", payload.motivo.strip())
+    await _registrar_evento("denuncia_resolvida", payload.denuncia_tipo, str(denuncia_id), payload.admin_usuario_id, payload.motivo)
+    await _notificar(
+        denunciante_id,
+        "Sua denúncia foi analisada",
+        f"A moderação concluiu a análise. Decisão: {payload.motivo.strip()}",
+    )
+    return {"mensagem": "Denúncia marcada como resolvida e denunciante notificado."}
 
 
 @router.post("/usuarios/{usuario_id}/avisar")
@@ -380,5 +431,6 @@ async def admin_desbanir_usuario(usuario_id: UUID, payload: AdminAction) -> dict
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
     await _registrar_evento("usuario_desbanido", "usuario", str(usuario_id), payload.admin_usuario_id, payload.motivo)
+    await supabase.table("ips_bloqueados").delete().eq("usuario_id", str(usuario_id)).execute()
     await _notificar(str(usuario_id), "Suspensão removida", f"Sua suspensão foi removida. Observação: {payload.motivo.strip()}")
     return {"mensagem": "Usuário desbanido e notificado."}

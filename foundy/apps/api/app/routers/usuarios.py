@@ -1,16 +1,18 @@
 import secrets
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from postgrest.exceptions import APIError
 
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
 from app.db.supabase_client import get_supabase
-from app.services.email_service import has_smtp_settings, send_verification_email
+from app.services.email_service import has_resend_settings, has_smtp_settings, send_support_email, send_verification_email
+from app.services.storage_service import store_public_image_if_needed
 
 
 router = APIRouter()
@@ -30,6 +32,8 @@ class UsuarioCadastro(BaseModel):
     empresa_cidade: str | None = Field(default=None, max_length=80)
     empresa_uf: str | None = Field(default=None, min_length=2, max_length=2)
     empresa_catalogo_publico: bool = True
+    empresa_cnpj: str | None = Field(default=None, min_length=14, max_length=20)
+    empresa_cep: str | None = Field(default=None, min_length=8, max_length=12)
 
 
 class UsuarioLogin(BaseModel):
@@ -93,13 +97,54 @@ def _session_payload(usuario: dict) -> dict[str, str]:
         "empresa_endereco_publico": usuario.get("empresa_endereco_publico") or "",
         "empresa_cidade": usuario.get("empresa_cidade") or "",
         "empresa_uf": usuario.get("empresa_uf") or "",
+        "banido_permanente": str(bool(usuario.get("banido_permanente", False))).lower(),
+        "banido_ate": usuario.get("banido_ate") or "",
+        "banimento_motivo": usuario.get("banimento_motivo") or "",
+        "chat_banido_permanente": str(bool(usuario.get("chat_banido_permanente", False))).lower(),
+        "chat_banido_ate": usuario.get("chat_banido_ate") or "",
+        "chat_banimento_motivo": usuario.get("chat_banimento_motivo") or "",
     }
 
 
 def _future_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    normalized = value.replace(" ", "T").replace("Z", "+00:00")
+    if normalized.endswith("+00"):
+        normalized = f"{normalized}:00"
+    return datetime.fromisoformat(normalized)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.headers.get("x-real-ip") or (request.client.host if request.client else "ip-desconhecido")
+
+
+def _ip_hash(ip: str) -> str:
+    secret = settings.ip_hash_secret or settings.jwt_secret_key
+    return hashlib.sha256(f"{secret}:{ip}".encode("utf-8")).hexdigest()
+
+
+async def _ensure_ip_allowed(request: Request) -> None:
+    response = await (
+        get_supabase()
+        .table("ips_bloqueados")
+        .select("motivo,banido_ate,permanente")
+        .eq("ip_hash", _ip_hash(_client_ip(request)))
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        return
+    block = response.data[0]
+    banido_ate = _future_datetime(block.get("banido_ate"))
+    if block.get("permanente") or (banido_ate and banido_ate > datetime.now(timezone.utc)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Este acesso foi bloqueado pela moderação. Motivo: {block.get('motivo') or 'violação dos termos.'}",
+        )
 
 
 def _ban_message(usuario: dict) -> str | None:
@@ -112,7 +157,8 @@ def _ban_message(usuario: dict) -> str | None:
 
 
 @router.post("/cadastrar", status_code=status.HTTP_201_CREATED)
-async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: BackgroundTasks) -> dict[str, object]:
+async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: BackgroundTasks, request: Request) -> dict[str, object]:
+    await _ensure_ip_allowed(request)
     if not payload.maior_de_idade:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -128,10 +174,12 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
         or not payload.empresa_endereco_publico
         or not payload.empresa_cidade
         or not payload.empresa_uf
+        or not payload.empresa_cnpj
+        or not payload.empresa_cep
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Para conta empresarial, informe nome, endereço público, cidade e UF da instituição.",
+            detail="Para conta empresarial, informe nome, CNPJ, CEP, endereço público, cidade e UF da instituição.",
         )
 
     supabase = get_supabase()
@@ -151,10 +199,10 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
             detail="Este e-mail já está cadastrado. Clique em Entrar ou use outro e-mail.",
         )
 
-    smtp_configurado = has_smtp_settings()
-    token = secrets.token_urlsafe(32) if smtp_configurado else None
-    expira_em = datetime.now(timezone.utc) + timedelta(hours=24) if smtp_configurado else None
-    email_verificado_em = None if smtp_configurado else datetime.now(timezone.utc).isoformat()
+    email_configurado = has_smtp_settings() or has_resend_settings()
+    token = secrets.token_urlsafe(32) if email_configurado else None
+    expira_em = datetime.now(timezone.utc) + timedelta(hours=24) if email_configurado else None
+    email_verificado_em = None if email_configurado else datetime.now(timezone.utc).isoformat()
     now_iso = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -180,8 +228,12 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
                 "empresa_endereco_publico": payload.empresa_endereco_publico.strip() if payload.empresa_endereco_publico else None,
                 "empresa_cidade": payload.empresa_cidade.strip() if payload.empresa_cidade else None,
                 "empresa_uf": payload.empresa_uf.strip().upper() if payload.empresa_uf else None,
+                "empresa_cnpj": payload.empresa_cnpj.strip() if payload.empresa_cnpj else None,
+                "empresa_cep": payload.empresa_cep.strip() if payload.empresa_cep else None,
+                "empresa_verificacao_status": "pendente" if payload.tipo_conta == "empresa" else None,
                 "empresa_verificada": False,
                 "empresa_catalogo_publico": payload.empresa_catalogo_publico,
+                "ultimo_ip_hash": _ip_hash(_client_ip(request)),
             }
         ).execute()
     except APIError as exc:
@@ -190,7 +242,23 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
             detail="Não foi possível cadastrar este e-mail. Verifique se ele já foi usado anteriormente.",
         ) from exc
 
-    if smtp_configurado and token:
+    if payload.tipo_conta == "empresa":
+        background_tasks.add_task(
+            send_support_email,
+            "Nova solicitação de conta empresarial Foundy",
+            (
+                "Uma empresa solicitou conta no Foundy.\n\n"
+                f"Empresa: {payload.empresa_nome}\n"
+                f"CNPJ informado: {payload.empresa_cnpj}\n"
+                f"CEP informado: {payload.empresa_cep}\n"
+                f"Endereço público: {payload.empresa_endereco_publico}\n"
+                f"Cidade/UF: {payload.empresa_cidade}/{payload.empresa_uf}\n"
+                f"E-mail de acesso: {email_normalizado}\n\n"
+                "Analise no painel administrativo antes de liberar como empresa verificada."
+            ),
+        )
+
+    if email_configurado and token:
         background_tasks.add_task(send_verification_email, email_normalizado, token)
         return {
             "mensagem": "Cadastro criado. Enviamos um e-mail de confirmação.",
@@ -244,7 +312,8 @@ async def confirmar_email(payload: ConfirmarEmail) -> dict[str, str]:
 
 
 @router.post("/entrar")
-async def entrar(payload: UsuarioLogin) -> dict[str, str]:
+async def entrar(payload: UsuarioLogin, request: Request) -> dict[str, str]:
+    await _ensure_ip_allowed(request)
     supabase = get_supabase()
     response = await (
         supabase.table("usuarios")
@@ -252,7 +321,8 @@ async def entrar(payload: UsuarioLogin) -> dict[str, str]:
             "id,nome,email,senha_hash,email_verificado_em,nivel_perfil,pontos_luz,"
             "foto_url,ocupacao,aceita_notificacoes_email,papel,banido_ate,banimento_motivo,"
             "banido_permanente,banimento_tipo,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente,"
-            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico"
+            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
+            "empresa_cnpj,empresa_cep,empresa_verificacao_status"
         )
         .eq("email", payload.email.lower())
         .is_("removido_em", "null")
@@ -269,6 +339,12 @@ async def entrar(payload: UsuarioLogin) -> dict[str, str]:
     if usuario["email_verificado_em"] is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Confirme seu e-mail antes de continuar.")
 
+    await (
+        supabase.table("usuarios")
+        .update({"ultimo_ip_hash": _ip_hash(_client_ip(request)), "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("id", usuario["id"])
+        .execute()
+    )
     return _session_payload(usuario)
 
 
@@ -279,6 +355,11 @@ async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> di
         updates["nome"] = updates["nome"].strip()
     if "ocupacao" in updates and updates["ocupacao"] is not None:
         updates["ocupacao"] = updates["ocupacao"].strip()
+    if "foto_url" in updates and updates["foto_url"]:
+        try:
+            updates["foto_url"] = await store_public_image_if_needed(str(updates["foto_url"]), f"usuarios/{usuario_id}")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Informe ao menos um dado do perfil.")
 
@@ -291,7 +372,8 @@ async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> di
         .is_("removido_em", "null")
         .select(
             "id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,"
-            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico"
+            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
+            "banido_ate,banimento_motivo,banido_permanente,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente"
         )
         .execute()
     )

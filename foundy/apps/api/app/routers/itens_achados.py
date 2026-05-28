@@ -1,10 +1,10 @@
-﻿from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 import secrets
 from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from postgrest.exceptions import APIError
 
 from app.core.config import settings
@@ -14,6 +14,7 @@ from app.core.security import hash_password
 from app.db.supabase_client import get_supabase
 from app.services.ai_processing import generate_hashtag_descriptors
 from app.services.email_service import send_notification_email, send_support_email
+from app.services.storage_service import store_public_image_if_needed
 
 
 router = APIRouter()
@@ -21,6 +22,16 @@ router = APIRouter()
 CategoriaItem = Literal["documentos", "eletronicos", "chaves", "vestuario", "outros"]
 StatusItem = Literal["publicado", "em_conversa", "devolvido", "arquivado", "destinado para doação"]
 StatusSala = Literal["bloqueado", "aberto", "encerrado", "em_revisao"]
+
+
+def _normalize_supabase_datetime(value):
+    """Supabase/PostgREST can return '+00' offsets, which Pydantic rejects."""
+    if not isinstance(value, str):
+        return value
+    normalized = value.replace(" ", "T")
+    if normalized.endswith("+00"):
+        normalized = f"{normalized}:00"
+    return normalized
 
 
 class ItemAchadoCreate(BaseModel):
@@ -69,6 +80,11 @@ class ItemAchadoOut(BaseModel):
     premium_ativo: bool = False
     premium_expira_em: datetime | None = None
 
+    @field_validator("criado_em", "premium_expira_em", mode="before")
+    @classmethod
+    def normalize_datetime(cls, value):
+        return _normalize_supabase_datetime(value)
+
 
 class ReivindicacaoCreate(BaseModel):
     usuario_id: UUID | None = None
@@ -98,6 +114,11 @@ class MensagemChatOut(BaseModel):
     motivos_moderacao: list[str] = Field(default_factory=list)
     denunciar_extorsao_visivel: bool
     criado_em: datetime
+
+    @field_validator("criado_em", mode="before")
+    @classmethod
+    def normalize_datetime(cls, value):
+        return _normalize_supabase_datetime(value)
 
 
 class DenunciaExtorsaoCreate(BaseModel):
@@ -151,6 +172,21 @@ def _normalize_display_hashtags(values: list[str]) -> list[str]:
     return display[:12]
 
 
+def _normalize_reasons(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed]
+        except Exception:
+            return [value]
+    return [str(value)]
+
+
 def _normalizar_item(row: dict) -> ItemAchadoOut:
     tags_ia = list(row.get("tags_ia") or [])
     hashtags_raw = list(row.get("hashtags") or row.get("hashtags_ia") or tags_ia)
@@ -182,7 +218,10 @@ def _normalizar_item(row: dict) -> ItemAchadoOut:
 def _is_future(value: str | None) -> bool:
     if not value:
         return False
-    return datetime.fromisoformat(value.replace("Z", "+00:00")) > datetime.now(timezone.utc)
+    normalized = value.replace(" ", "T").replace("Z", "+00:00")
+    if normalized.endswith("+00"):
+        normalized = f"{normalized}:00"
+    return datetime.fromisoformat(normalized) > datetime.now(timezone.utc)
 
 
 async def _buscar_usuario_verificado(usuario_id: UUID) -> dict:
@@ -312,6 +351,11 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate, background_tasks: Bac
     descricao = payload.descricao.strip()
     local_descricao = payload.local_descricao.strip() if payload.local_descricao else None
     imagem_publica = None if payload.categoria == "documentos" else payload.imagem_url
+    if imagem_publica:
+        try:
+            imagem_publica = await store_public_image_if_needed(imagem_publica, f"itens/{payload.usuario_id}")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     if payload.categoria == "documentos":
         descricao = censor_sensitive_text(descricao)
@@ -594,11 +638,11 @@ async def listar_mensagens_chat(sala_chat_id: UUID, usuario_id: UUID) -> list[Me
     mensagens: list[MensagemChatOut] = []
     for mensagem in response.data:
         flagged = mensagem["status_moderacao"] in {"suspeita_extorsao", "em_revisao"}
+        mensagem_payload = {**mensagem, "motivos_moderacao": _normalize_reasons(mensagem.get("motivos_moderacao"))}
         mensagens.append(
             MensagemChatOut(
-                **mensagem,
+                **mensagem_payload,
                 denunciar_extorsao_visivel=denunciar_extorsao_visivel or flagged,
-                motivos_moderacao=list(mensagem.get("motivos_moderacao") or []),
             )
         )
     return mensagens
@@ -709,11 +753,11 @@ async def enviar_mensagem_chat(
                 .execute()
             )
 
-    return MensagemChatOut(
+    mensagem_payload = {
         **response.data[0],
-        motivos_moderacao=list(response.data[0].get("motivos_moderacao") or []),
-        denunciar_extorsao_visivel=scan.flagged,
-    )
+        "motivos_moderacao": _normalize_reasons(response.data[0].get("motivos_moderacao")),
+    }
+    return MensagemChatOut(**mensagem_payload, denunciar_extorsao_visivel=scan.flagged)
 
 
 @router.post("/salas/{sala_chat_id}/denunciar-extorsao", status_code=status.HTTP_201_CREATED)
@@ -976,7 +1020,10 @@ async def simular_callback_pix(payload: PixCallbackSimulation) -> dict[str, str]
 async def atualizar_item_achado(item_id: UUID, payload: ItemAchadoUpdate) -> dict[str, str]:
     updates = payload.model_dump(exclude_unset=True)
     if "imagem_url" in updates and updates["imagem_url"] is not None:
-        updates["imagem_url"] = str(updates["imagem_url"])
+        try:
+            updates["imagem_url"] = await store_public_image_if_needed(str(updates["imagem_url"]), f"itens/{item_id}")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Informe ao menos um campo para atualizar.")

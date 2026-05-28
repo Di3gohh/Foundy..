@@ -214,6 +214,12 @@ async def painel_usuario(usuario_id: UUID) -> dict:
             "empresa_cidade": usuario.get("empresa_cidade") or "",
             "empresa_uf": usuario.get("empresa_uf") or "",
             "empresa_catalogo_publico": str(bool(usuario.get("empresa_catalogo_publico", True))).lower(),
+            "banido_permanente": str(bool(usuario.get("banido_permanente", False))).lower(),
+            "banido_ate": usuario.get("banido_ate") or "",
+            "banimento_motivo": usuario.get("banimento_motivo") or "",
+            "chat_banido_permanente": str(bool(usuario.get("chat_banido_permanente", False))).lower(),
+            "chat_banido_ate": usuario.get("chat_banido_ate") or "",
+            "chat_banimento_motivo": usuario.get("chat_banimento_motivo") or "",
         },
         "itens_postados": [
             {

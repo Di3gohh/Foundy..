@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.db.supabase_client import get_supabase
+from app.services.storage_service import store_public_image_if_needed
 
 
 router = APIRouter()
@@ -19,6 +20,7 @@ class EmpresaCatalogoItemCreate(BaseModel):
     titulo: str = Field(min_length=3, max_length=120)
     descricao: str = Field(min_length=5, max_length=1000)
     categoria: CatalogCategory
+    subcategoria: str | None = Field(default=None, max_length=80)
     codigo_interno: str | None = Field(default=None, max_length=80)
     local_armazenamento: str | None = Field(default=None, max_length=160)
     imagem_url: str | None = Field(default=None, max_length=5_000_000)
@@ -77,7 +79,7 @@ async def listar_catalogo_empresa(empresa_id: UUID, status_item: CatalogStatus |
     supabase = get_supabase()
     query = (
         supabase.table("empresa_catalogo_itens")
-        .select("id,empresa_usuario_id,titulo,descricao,categoria,codigo_interno,local_armazenamento,imagem_url,status,retirado_por_nome,retirado_em,criado_em,atualizado_em")
+        .select("id,empresa_usuario_id,titulo,descricao,categoria,subcategoria,codigo_interno,local_armazenamento,imagem_url,status,retirado_por_nome,retirado_em,criado_em,atualizado_em")
         .eq("empresa_usuario_id", str(empresa_id))
         .order("criado_em", desc=True)
         .limit(200)
@@ -93,6 +95,11 @@ async def criar_item_catalogo(empresa_id: UUID, payload: EmpresaCatalogoItemCrea
     await _ensure_empresa_owner(empresa_id, payload.usuario_id)
     supabase = get_supabase()
     imagem_publica = None if payload.categoria == "documentos" else payload.imagem_url
+    if imagem_publica:
+        try:
+            imagem_publica = await store_public_image_if_needed(imagem_publica, f"empresas/{empresa_id}")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     response = await (
         supabase.table("empresa_catalogo_itens")
         .insert(
@@ -101,13 +108,14 @@ async def criar_item_catalogo(empresa_id: UUID, payload: EmpresaCatalogoItemCrea
                 "titulo": payload.titulo.strip(),
                 "descricao": payload.descricao.strip(),
                 "categoria": payload.categoria,
+                "subcategoria": payload.subcategoria.strip() if payload.subcategoria else None,
                 "codigo_interno": payload.codigo_interno.strip() if payload.codigo_interno else None,
                 "local_armazenamento": payload.local_armazenamento.strip() if payload.local_armazenamento else None,
                 "imagem_url": imagem_publica,
                 "status": "disponivel",
             }
         )
-        .select("id,empresa_usuario_id,titulo,descricao,categoria,codigo_interno,local_armazenamento,imagem_url,status,retirado_por_nome,retirado_em,criado_em,atualizado_em")
+        .select("id,empresa_usuario_id,titulo,descricao,categoria,subcategoria,codigo_interno,local_armazenamento,imagem_url,status,retirado_por_nome,retirado_em,criado_em,atualizado_em")
         .execute()
     )
     if not response.data:
