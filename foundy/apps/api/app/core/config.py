@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_from_email: str = Field(default="foundy.company@gmail.com", alias="SMTP_FROM_EMAIL")
     support_email: str = Field(default="foundy.company@gmail.com", alias="SUPPORT_EMAIL")
-    admin_emails: list[str] = Field(default_factory=lambda: ["diego.corazza9@gmail.com"], alias="ADMIN_EMAILS")
+    admin_emails: list[str] = Field(default_factory=lambda: ["foundy.company@gmail.com"], alias="ADMIN_EMAILS")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

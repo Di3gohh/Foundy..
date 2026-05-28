@@ -26,6 +26,10 @@ class MarcarNotificacaoLida(BaseModel):
     usuario_id: UUID
 
 
+class ArquivarAlertaPerdido(BaseModel):
+    usuario_id: UUID
+
+
 def _wkt_point(longitude: float, latitude: float) -> str:
     return f"POINT({longitude} {latitude})"
 
@@ -88,3 +92,18 @@ async def marcar_lida(notificacao_id: UUID, payload: MarcarNotificacaoLida) -> d
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notificacao nao encontrada.")
     return {"mensagem": "Notificacao marcada como lida."}
+
+
+@router.delete("/alertas-perdidos/{alerta_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def arquivar_alerta_perdido(alerta_id: UUID, usuario_id: UUID) -> None:
+    supabase = get_supabase()
+    response = await (
+        supabase.table("alertas_perdidos")
+        .update({"status": "arquivado", "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("id", str(alerta_id))
+        .eq("usuario_id", str(usuario_id))
+        .select("id")
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta nao encontrado ou voce nao tem permissao.")

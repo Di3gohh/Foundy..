@@ -100,6 +100,8 @@ class DenunciaExtorsaoCreate(BaseModel):
     usuario_id: UUID
     mensagem_chat_id: UUID | None = None
     motivo: str = Field(min_length=5, max_length=500)
+    prova_descricao: str | None = Field(default=None, max_length=1000)
+    prova_arquivo_nome: str | None = Field(default=None, max_length=160)
 
 
 class LostBoostCheckoutCreate(BaseModel):
@@ -205,6 +207,57 @@ async def _buscar_sala_e_participacao(sala_chat_id: UUID, usuario_id: UUID) -> d
     if str(usuario_id) not in participantes:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Voce nao participa desta sala.")
     return sala
+
+
+def _chat_snippet(message: str) -> str:
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    snippet = "\n".join(lines[:3]) if lines else message.strip()
+    return snippet[:320]
+
+
+async def _upsert_chat_notification(
+    destinatario_id: str,
+    remetente_id: UUID,
+    sala_chat_id: UUID,
+    item_achado_id: str,
+    message: str,
+) -> None:
+    supabase = get_supabase()
+    remetente = await (
+        supabase.table("usuarios")
+        .select("nome")
+        .eq("id", str(remetente_id))
+        .limit(1)
+        .execute()
+    )
+    sender_name = remetente.data[0]["nome"] if remetente.data else "Alguem no Foundy"
+    snippet = _chat_snippet(message)
+    payload = {
+        "titulo": f"Mensagem de {sender_name}",
+        "mensagem": f"{sender_name}: {snippet}",
+        "item_achado_id": item_achado_id,
+        "sala_chat_id": str(sala_chat_id),
+        "criado_em": datetime.now(timezone.utc).isoformat(),
+    }
+    existing = await (
+        supabase.table("notificacoes")
+        .select("id")
+        .eq("usuario_id", destinatario_id)
+        .eq("tipo", "chat")
+        .eq("sala_chat_id", str(sala_chat_id))
+        .is_("lida_em", "null")
+        .order("criado_em", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        await supabase.table("notificacoes").update(payload).eq("id", existing.data[0]["id"]).execute()
+        return
+    await (
+        supabase.table("notificacoes")
+        .insert({"usuario_id": destinatario_id, "tipo": "chat", **payload})
+        .execute()
+    )
 
 
 @router.post("", response_model=ItemAchadoOut, status_code=status.HTTP_201_CREATED)
@@ -390,7 +443,7 @@ async def validar_reivindicacao(reivindicacao_id: UUID, payload: ValidacaoReivin
 
     reivindicacao = await (
         supabase.table("reivindicacoes_item")
-        .select("id,item_achado_id")
+        .select("id,item_achado_id,usuario_reivindicante_id")
         .eq("id", str(reivindicacao_id))
         .execute()
     )
@@ -399,7 +452,7 @@ async def validar_reivindicacao(reivindicacao_id: UUID, payload: ValidacaoReivin
 
     item = await (
         supabase.table("itens_achados")
-        .select("id,usuario_id")
+        .select("id,usuario_id,titulo")
         .eq("id", reivindicacao.data[0]["item_achado_id"])
         .execute()
     )
@@ -435,6 +488,27 @@ async def validar_reivindicacao(reivindicacao_id: UUID, payload: ValidacaoReivin
         )
         if sala.data:
             sala_chat_id = sala.data[0]["id"]
+    claimant_id = reivindicacao.data[0].get("usuario_reivindicante_id")
+    if claimant_id:
+        await (
+            supabase.table("notificacoes")
+            .insert(
+                {
+                    "usuario_id": claimant_id,
+                    "tipo": "chat" if payload.aprovada else "sistema",
+                    "titulo": "Resposta aprovada" if payload.aprovada else "Resposta recusada",
+                    "mensagem": (
+                        f"Sua resposta para '{item.data[0].get('titulo', 'Item encontrado')}' foi aprovada. O chat seguro foi liberado."
+                        if payload.aprovada
+                        else f"Sua resposta para '{item.data[0].get('titulo', 'Item encontrado')}' nao foi validada pelo publicador."
+                    ),
+                    "item_achado_id": reivindicacao.data[0]["item_achado_id"],
+                    "sala_chat_id": sala_chat_id,
+                    "reivindicacao_id": str(reivindicacao_id),
+                }
+            )
+            .execute()
+        )
 
     return {
         "mensagem": (
@@ -488,6 +562,8 @@ async def enviar_mensagem_chat(
     sala = await _buscar_sala_e_participacao(sala_chat_id, payload.usuario_id)
     if sala["status"] == "bloqueado":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="O chat ainda esta bloqueado pelo desafio do dono.")
+    if sala["status"] == "encerrado":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Este chat ja foi encerrado porque a devolucao foi concluida.")
 
     mensagem = payload.mensagem.strip()
     scan = scan_chat_message(mensagem)
@@ -530,20 +606,7 @@ async def enviar_mensagem_chat(
         .execute()
     )
     if destinatario:
-        await (
-            supabase.table("notificacoes")
-            .insert(
-                {
-                    "usuario_id": str(destinatario),
-                    "tipo": "chat",
-                    "titulo": "Nova mensagem no chat seguro",
-                    "mensagem": "Voce recebeu uma nova mensagem sobre um item no Foundy.",
-                    "item_achado_id": sala["item_achado_id"],
-                    "sala_chat_id": str(sala_chat_id),
-                }
-            )
-            .execute()
-        )
+        await _upsert_chat_notification(str(destinatario), payload.usuario_id, sala_chat_id, sala["item_achado_id"], mensagem)
         destinatario_email = await (
             supabase.table("usuarios")
             .select("email,aceita_notificacoes_email")
@@ -578,6 +641,7 @@ async def enviar_mensagem_chat(
                         "titulo": "Possivel extorsao detectada",
                         "mensagem": "Detectamos termos financeiros suspeitos na conversa. Use o botao Denunciar Extorsao.",
                         "item_achado_id": sala["item_achado_id"],
+                        "sala_chat_id": str(sala_chat_id),
                     }
                 )
                 .execute()
@@ -609,6 +673,8 @@ async def denunciar_extorsao(
                 "usuario_denunciante_id": str(payload.usuario_id),
                 "mensagem_chat_id": str(payload.mensagem_chat_id) if payload.mensagem_chat_id else None,
                 "motivo": payload.motivo.strip(),
+                "prova_descricao": payload.prova_descricao.strip() if payload.prova_descricao else None,
+                "prova_arquivo_nome": payload.prova_arquivo_nome.strip() if payload.prova_arquivo_nome else None,
                 "status": "pendente",
             }
         )
@@ -645,6 +711,8 @@ async def denunciar_extorsao(
             f"Usuario denunciante: {payload.usuario_id}\n"
             f"Mensagem denunciada: {payload.mensagem_chat_id or 'nao informada'}\n"
             f"Motivo informado: {payload.motivo.strip()}\n\n"
+            f"Prova/print: {payload.prova_descricao or 'nao informado'}\n"
+            f"Arquivo: {payload.prova_arquivo_nome or 'nao informado'}\n\n"
             "Acesse o painel/Supabase para revisar a sala e aplicar as medidas necessarias."
         ),
     )
@@ -764,8 +832,21 @@ async def atualizar_item_achado(item_id: UUID, payload: ItemAchadoUpdate) -> dic
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def arquivar_item_achado(item_id: UUID) -> None:
+async def arquivar_item_achado(item_id: UUID, usuario_id: UUID) -> None:
+    await _buscar_usuario_verificado(usuario_id)
     supabase = get_supabase()
+    item = await (
+        supabase.table("itens_achados")
+        .select("id,usuario_id")
+        .eq("id", str(item_id))
+        .limit(1)
+        .execute()
+    )
+    if not item.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
+    if item.data[0].get("usuario_id") != str(usuario_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Voce so pode apagar itens publicados por voce.")
+
     try:
         response = await (
             supabase.table("itens_achados")
@@ -780,3 +861,9 @@ async def arquivar_item_achado(item_id: UUID) -> None:
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
 
+    await (
+        supabase.table("salas_chat")
+        .update({"status": "encerrado", "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("item_achado_id", str(item_id))
+        .execute()
+    )

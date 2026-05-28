@@ -33,7 +33,7 @@ async def _ensure_admin(admin_usuario_id: UUID) -> dict:
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Administrador nao encontrado.")
     usuario = response.data[0]
-    if usuario.get("email", "").lower() not in settings.admin_emails and usuario.get("papel") != "admin":
+    if usuario.get("email", "").lower() not in settings.admin_emails:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso administrativo negado.")
     return usuario
 
@@ -64,7 +64,14 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         .limit(100)
         .execute()
     )
-    return {"usuarios": usuarios.data, "itens": itens.data, "moderacao": moderacao.data}
+    denuncias = await (
+        supabase.table("denuncias_extorsao")
+        .select("id,sala_chat_id,item_achado_id,usuario_denunciante_id,motivo,prova_descricao,prova_arquivo_nome,status,criado_em")
+        .order("criado_em", desc=True)
+        .limit(100)
+        .execute()
+    )
+    return {"usuarios": usuarios.data, "itens": itens.data, "moderacao": moderacao.data, "denuncias": denuncias.data}
 
 
 @router.post("/itens/{item_id}/arquivar")

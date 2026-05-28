@@ -1,5 +1,6 @@
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
@@ -22,6 +23,12 @@ class UsuarioCadastro(BaseModel):
     maior_de_idade: bool = False
     aceitou_termos: bool = False
     aceita_notificacoes_email: bool = True
+    tipo_conta: Literal["pessoal", "empresa"] = "pessoal"
+    empresa_nome: str | None = Field(default=None, min_length=3, max_length=140)
+    empresa_descricao: str | None = Field(default=None, max_length=500)
+    empresa_endereco_publico: str | None = Field(default=None, max_length=220)
+    empresa_cidade: str | None = Field(default=None, max_length=80)
+    empresa_uf: str | None = Field(default=None, min_length=2, max_length=2)
 
 
 class UsuarioLogin(BaseModel):
@@ -60,7 +67,7 @@ def _badge_by_karma(points: int) -> str:
 
 
 def _is_admin(email: str, papel: str | None = None) -> bool:
-    return email.lower() in settings.admin_emails or papel == "admin"
+    return email.lower() in settings.admin_emails
 
 
 def _session_payload(usuario: dict) -> dict[str, str]:
@@ -70,6 +77,7 @@ def _session_payload(usuario: dict) -> dict[str, str]:
         "mensagem": "Login realizado com sucesso.",
         "usuario_id": str(UUID(usuario["id"])),
         "nome": usuario["nome"],
+        "email": email,
         "nivel_perfil": usuario.get("nivel_perfil") or _badge_by_karma(pontos),
         "pontos_luz": str(pontos),
         "badge_publica": _badge_by_karma(pontos),
@@ -77,6 +85,12 @@ def _session_payload(usuario: dict) -> dict[str, str]:
         "ocupacao": usuario.get("ocupacao") or "",
         "aceita_notificacoes_email": str(bool(usuario.get("aceita_notificacoes_email", True))).lower(),
         "is_admin": str(_is_admin(email, usuario.get("papel"))).lower(),
+        "tipo_conta": usuario.get("tipo_conta") or "pessoal",
+        "empresa_nome": usuario.get("empresa_nome") or "",
+        "empresa_descricao": usuario.get("empresa_descricao") or "",
+        "empresa_endereco_publico": usuario.get("empresa_endereco_publico") or "",
+        "empresa_cidade": usuario.get("empresa_cidade") or "",
+        "empresa_uf": usuario.get("empresa_uf") or "",
     }
 
 
@@ -91,6 +105,16 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Leia e aceite os Termos de Uso e a Politica de Privacidade para criar sua conta.",
+        )
+    if payload.tipo_conta == "empresa" and (
+        not payload.empresa_nome
+        or not payload.empresa_endereco_publico
+        or not payload.empresa_cidade
+        or not payload.empresa_uf
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Para conta empresarial, informe nome, endereco publico, cidade e UF da instituicao.",
         )
 
     supabase = get_supabase()
@@ -133,6 +157,13 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
                 "termos_aceitos_em": now_iso,
                 "maioridade_confirmada_em": now_iso,
                 "papel": "admin" if _is_admin(email_normalizado) else "usuario",
+                "tipo_conta": payload.tipo_conta,
+                "empresa_nome": payload.empresa_nome.strip() if payload.empresa_nome else None,
+                "empresa_descricao": payload.empresa_descricao.strip() if payload.empresa_descricao else None,
+                "empresa_endereco_publico": payload.empresa_endereco_publico.strip() if payload.empresa_endereco_publico else None,
+                "empresa_cidade": payload.empresa_cidade.strip() if payload.empresa_cidade else None,
+                "empresa_uf": payload.empresa_uf.strip().upper() if payload.empresa_uf else None,
+                "empresa_verificada": False,
             }
         ).execute()
     except APIError as exc:
@@ -201,7 +232,8 @@ async def entrar(payload: UsuarioLogin) -> dict[str, str]:
         supabase.table("usuarios")
         .select(
             "id,nome,email,senha_hash,email_verificado_em,nivel_perfil,pontos_luz,"
-            "foto_url,ocupacao,aceita_notificacoes_email,papel,banido_ate,banimento_motivo"
+            "foto_url,ocupacao,aceita_notificacoes_email,papel,banido_ate,banimento_motivo,"
+            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf"
         )
         .eq("email", payload.email.lower())
         .is_("removido_em", "null")
@@ -240,7 +272,10 @@ async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> di
         .update(updates)
         .eq("id", str(usuario_id))
         .is_("removido_em", "null")
-        .select("id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel")
+        .select(
+            "id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,"
+            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf"
+        )
         .execute()
     )
     if not response.data:

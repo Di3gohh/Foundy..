@@ -24,6 +24,7 @@ export type ItemAchado = {
 export type FoundySession = {
   usuario_id: string
   nome: string
+  email?: string
   nivel_perfil: string
   pontos_luz: string
   badge_publica?: string
@@ -31,6 +32,12 @@ export type FoundySession = {
   ocupacao?: string
   aceita_notificacoes_email?: string
   is_admin?: string
+  tipo_conta?: 'pessoal' | 'empresa'
+  empresa_nome?: string
+  empresa_descricao?: string
+  empresa_endereco_publico?: string
+  empresa_cidade?: string
+  empresa_uf?: string
 }
 
 export type NotificationItem = {
@@ -55,7 +62,14 @@ export type ChatSummary = {
   status: string
   criado_em: string
   atualizado_em: string
+  ultima_mensagem_em?: string | null
+  ultimo_remetente_id?: string | null
+  outro_usuario_id?: string | null
   outro_usuario_nome?: string | null
+  outro_usuario_foto_url?: string | null
+  outro_usuario_ocupacao?: string | null
+  outro_usuario_badge?: string | null
+  outro_usuario_pontos_luz?: number | null
   ultima_mensagem?: string | null
 }
 
@@ -73,9 +87,40 @@ export type ClaimSummary = {
   item_achado_id: string
   item_titulo: string
   usuario_reivindicante_id: string | null
+  usuario_reivindicante_nome?: string | null
+  usuario_reivindicante_foto_url?: string | null
+  usuario_reivindicante_ocupacao?: string | null
   status: string
   resposta_desafio: string
   criado_em: string
+}
+
+export type EmpresaFoundy = {
+  id: string
+  nome: string
+  foto_url?: string | null
+  ocupacao?: string | null
+  tipo_conta: 'empresa'
+  empresa_nome?: string | null
+  empresa_descricao?: string | null
+  empresa_endereco_publico?: string | null
+  empresa_cidade?: string | null
+  empresa_uf?: string | null
+  empresa_verificada?: boolean
+}
+
+export type EmpresaCatalogoItem = {
+  id: string
+  empresa_usuario_id: string
+  titulo: string
+  descricao: string
+  categoria: ItemCategory
+  codigo_interno?: string | null
+  local_armazenamento?: string | null
+  imagem_url?: string | null
+  status: 'disponivel' | 'retirado' | 'arquivado'
+  criado_em: string
+  atualizado_em?: string
 }
 
 export type UserDashboard = {
@@ -156,6 +201,11 @@ async function requestJson<T>(path: string, init: RequestInit, fallbackMessage: 
   const response = await fetch(`${API_URL}${path}`, init)
   if (!response.ok) await parseError(response, fallbackMessage)
   return (await response.json()) as T
+}
+
+async function requestVoid(path: string, init: RequestInit, fallbackMessage: string) {
+  const response = await fetch(`${API_URL}${path}`, init)
+  if (!response.ok) await parseError(response, fallbackMessage)
 }
 
 export async function buscarItensAchadosProximos(params?: { latitude?: number; longitude?: number; raioMetros?: number }) {
@@ -272,13 +322,13 @@ export async function enviarMensagemChat(salaChatId: string, usuarioId: string, 
   )
 }
 
-export async function denunciarExtorsao(salaChatId: string, usuarioId: string, motivo: string, mensagemId?: string) {
+export async function denunciarExtorsao(salaChatId: string, usuarioId: string, motivo: string, mensagemId?: string, provaDescricao?: string, provaArquivoNome?: string) {
   return requestJson<{ mensagem: string }>(
     `/itens-achados/salas/${salaChatId}/denunciar-extorsao`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ usuario_id: usuarioId, motivo, mensagem_chat_id: mensagemId ?? null }),
+      body: JSON.stringify({ usuario_id: usuarioId, motivo, mensagem_chat_id: mensagemId ?? null, prova_descricao: provaDescricao ?? null, prova_arquivo_nome: provaArquivoNome ?? null }),
     },
     'Nao foi possivel enviar a denuncia de extorsao.',
   )
@@ -301,6 +351,24 @@ export async function criarAlertaPerdido(payload: {
       body: JSON.stringify(payload),
     },
     'Nao foi possivel criar o alerta perdido.',
+  )
+}
+
+export async function arquivarItemProprio(itemId: string, usuarioId: string) {
+  const query = new URLSearchParams({ usuario_id: usuarioId })
+  return requestVoid(
+    `/itens-achados/${itemId}?${query.toString()}`,
+    { method: 'DELETE', headers: { Accept: 'application/json' } },
+    'Nao foi possivel apagar este item.',
+  )
+}
+
+export async function arquivarAlertaPerdido(alertaId: string, usuarioId: string) {
+  const query = new URLSearchParams({ usuario_id: usuarioId })
+  return requestVoid(
+    `/notificacoes/alertas-perdidos/${alertaId}?${query.toString()}`,
+    { method: 'DELETE', headers: { Accept: 'application/json' } },
+    'Nao foi possivel apagar este alerta.',
   )
 }
 
@@ -332,6 +400,12 @@ export async function cadastrarUsuario(payload: {
   maior_de_idade: boolean
   aceitou_termos: boolean
   aceita_notificacoes_email: boolean
+  tipo_conta?: 'pessoal' | 'empresa'
+  empresa_nome?: string
+  empresa_descricao?: string
+  empresa_endereco_publico?: string
+  empresa_cidade?: string
+  empresa_uf?: string
 }) {
   return requestJson<{ mensagem: string; email_verificado?: boolean; login_liberado?: boolean }>(
     '/usuarios/cadastrar',
@@ -341,6 +415,59 @@ export async function cadastrarUsuario(payload: {
       body: JSON.stringify(payload),
     },
     'Nao foi possivel criar a conta. Confira os dados e tente novamente.',
+  )
+}
+
+export async function listarEmpresasFoundy(q?: string) {
+  const query = new URLSearchParams()
+  if (q) query.set('q', q)
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return requestJson<EmpresaFoundy[]>(
+    `/empresas${suffix}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Nao foi possivel carregar empresas parceiras.',
+  )
+}
+
+export async function listarCatalogoEmpresa(empresaId: string, statusItem: 'disponivel' | 'retirado' | 'arquivado' | '' = 'disponivel') {
+  const query = new URLSearchParams()
+  if (statusItem) query.set('status_item', statusItem)
+  return requestJson<EmpresaCatalogoItem[]>(
+    `/empresas/${empresaId}/catalogo?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Nao foi possivel carregar o catalogo empresarial.',
+  )
+}
+
+export async function criarItemCatalogoEmpresa(empresaId: string, payload: {
+  usuario_id: string
+  titulo: string
+  descricao: string
+  categoria: ItemCategory
+  codigo_interno?: string
+  local_armazenamento?: string
+  imagem_url?: string | null
+}) {
+  return requestJson<EmpresaCatalogoItem>(
+    `/empresas/${empresaId}/catalogo`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    'Nao foi possivel cadastrar o item no catalogo empresarial.',
+  )
+}
+
+export async function atualizarStatusCatalogoEmpresa(itemId: string, usuarioId: string, statusItem: 'disponivel' | 'retirado' | 'arquivado') {
+  return requestJson<{ mensagem: string }>(
+    `/empresas/catalogo/${itemId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ usuario_id: usuarioId, status: statusItem }),
+    },
+    'Nao foi possivel atualizar o item empresarial.',
   )
 }
 
@@ -395,7 +522,7 @@ export async function confirmarDevolucaoComAvaliacao(payload: {
 
 export async function buscarPainelAdmin(usuarioId: string) {
   const query = new URLSearchParams({ admin_usuario_id: usuarioId })
-  return requestJson<{ usuarios: unknown[]; itens: ItemAchado[]; moderacao: unknown[] }>(
+  return requestJson<{ usuarios: unknown[]; itens: ItemAchado[]; moderacao: unknown[]; denuncias?: unknown[] }>(
     `/admin/painel?${query.toString()}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
     'Nao foi possivel carregar o painel administrativo.',

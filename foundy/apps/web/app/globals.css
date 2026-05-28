@@ -283,6 +283,42 @@ select:focus-visible {
   animation: foundyChatBreathe 3.4s ease-in-out infinite;
 }
 
+.foundy-tabbar {
+  scrollbar-width: none;
+}
+
+.foundy-tabbar::-webkit-scrollbar {
+  display: none;
+}
+
+.foundy-chat-window {
+  background:
+    radial-gradient(560px circle at 18% 10%, color-mix(in srgb, var(--foundy-blue) 9%, transparent), transparent 45%),
+    radial-gradient(520px circle at 86% 88%, color-mix(in srgb, var(--foundy-green) 8%, transparent), transparent 48%),
+    var(--foundy-background);
+}
+
+.foundy-footer-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--foundy-blue) 15%, transparent), transparent 40%),
+    linear-gradient(315deg, color-mix(in srgb, var(--foundy-green) 13%, transparent), transparent 36%),
+    color-mix(in srgb, var(--foundy-surface) 92%, transparent);
+}
+
+.foundy-footer-card::after {
+  content: '';
+  position: absolute;
+  right: -3rem;
+  bottom: -3rem;
+  width: 10rem;
+  height: 10rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foundy-green) 18%, transparent);
+  filter: blur(28px);
+}
+
 .foundy-input {
   width: 100%;
   border: 1px solid var(--foundy-border);

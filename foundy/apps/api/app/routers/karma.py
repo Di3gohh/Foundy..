@@ -56,6 +56,13 @@ async def confirmar_devolucao(payload: ConfirmarDevolucao) -> dict[str, object]:
     if not item.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
 
+    await (
+        supabase.table("salas_chat")
+        .update({"status": "encerrado", "atualizado_em": now_iso})
+        .eq("item_achado_id", str(payload.item_achado_id))
+        .execute()
+    )
+
     usuario = await (
         supabase.table("usuarios")
         .select("id,pontos_luz")

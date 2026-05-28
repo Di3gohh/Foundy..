@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.pool import close_db, connect_to_db
 from app.db.supabase_client import close_supabase, init_supabase
-from app.routers import admin, itens_achados, karma, notificacoes, painel, processamento, usuarios
+from app.routers import admin, empresas, itens_achados, karma, notificacoes, painel, processamento, usuarios
 
 
 @asynccontextmanager
@@ -41,6 +41,7 @@ app.include_router(processamento.router, prefix="/processamento", tags=["Process
 app.include_router(karma.router, prefix="/karma", tags=["Pontos de Luz"])
 app.include_router(painel.router, prefix="/painel", tags=["Painel do Usuario"])
 app.include_router(admin.router, prefix="/admin", tags=["Administracao"])
+app.include_router(empresas.router, prefix="/empresas", tags=["Empresas"])
 
 
 @app.get("/health", tags=["Sistema"])

@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.core.config import settings
 from app.db.supabase_client import get_supabase
 
 
@@ -22,7 +23,10 @@ async def _usuario_base(usuario_id: UUID) -> dict:
     supabase = get_supabase()
     response = await (
         supabase.table("usuarios")
-        .select("id,nome,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,email")
+        .select(
+            "id,nome,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,email,"
+            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf"
+        )
         .eq("id", str(usuario_id))
         .is_("removido_em", "null")
         .limit(1)
@@ -52,16 +56,40 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
         return []
 
     item_ids = list({row["item_achado_id"] for row in chats.values() if row.get("item_achado_id")})
+    other_user_ids = list(
+        {
+            row[column]
+            for row in chats.values()
+            for column in ("encontrador_usuario_id", "dono_usuario_id")
+            if row.get(column) and row.get(column) != str(usuario_id)
+        }
+    )
     item_titles: dict[str, str] = {}
     if item_ids:
         itens = await supabase.table("itens_achados").select("id,titulo").in_("id", item_ids).execute()
         item_titles = {row["id"]: row["titulo"] for row in itens.data}
 
+    users_by_id: dict[str, dict] = {}
+    if other_user_ids:
+        usuarios = await (
+            supabase.table("usuarios")
+            .select("id,nome,foto_url,ocupacao,nivel_perfil,pontos_luz")
+            .in_("id", other_user_ids)
+            .execute()
+        )
+        users_by_id = {row["id"]: row for row in usuarios.data}
+
     summaries: list[dict] = []
     for row in chats.values():
+        other_user_id = (
+            row.get("dono_usuario_id")
+            if row.get("encontrador_usuario_id") == str(usuario_id)
+            else row.get("encontrador_usuario_id")
+        )
+        other_user = users_by_id.get(other_user_id or "", {})
         last_message = await (
             supabase.table("mensagens_chat")
-            .select("mensagem,criado_em")
+            .select("mensagem,criado_em,remetente_usuario_id")
             .eq("sala_chat_id", row["id"])
             .order("criado_em", desc=True)
             .limit(1)
@@ -78,6 +106,14 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
                 "criado_em": row["criado_em"],
                 "atualizado_em": row["atualizado_em"],
                 "ultima_mensagem": last_message.data[0]["mensagem"] if last_message.data else None,
+                "ultima_mensagem_em": last_message.data[0]["criado_em"] if last_message.data else None,
+                "ultimo_remetente_id": last_message.data[0]["remetente_usuario_id"] if last_message.data else None,
+                "outro_usuario_id": other_user_id,
+                "outro_usuario_nome": other_user.get("nome"),
+                "outro_usuario_foto_url": other_user.get("foto_url"),
+                "outro_usuario_ocupacao": other_user.get("ocupacao"),
+                "outro_usuario_badge": other_user.get("nivel_perfil"),
+                "outro_usuario_pontos_luz": other_user.get("pontos_luz"),
             }
         )
 
@@ -119,10 +155,23 @@ async def painel_usuario(usuario_id: UUID) -> dict:
         .execute()
     )
     item_titles = {item["id"]: item["titulo"] for item in itens.data}
+    reivindicante_ids = list({row["usuario_reivindicante_id"] for row in reivindicacoes.data if row.get("usuario_reivindicante_id")})
+    reivindicantes: dict[str, dict] = {}
+    if reivindicante_ids:
+        usuarios_reivindicantes = await (
+            supabase.table("usuarios")
+            .select("id,nome,foto_url,ocupacao,nivel_perfil,pontos_luz")
+            .in_("id", reivindicante_ids)
+            .execute()
+        )
+        reivindicantes = {row["id"]: row for row in usuarios_reivindicantes.data}
     reivindicacoes_recebidas = [
         {
             **row,
             "item_titulo": item_titles.get(row["item_achado_id"], "Item encontrado"),
+            "usuario_reivindicante_nome": reivindicantes.get(row.get("usuario_reivindicante_id") or "", {}).get("nome"),
+            "usuario_reivindicante_foto_url": reivindicantes.get(row.get("usuario_reivindicante_id") or "", {}).get("foto_url"),
+            "usuario_reivindicante_ocupacao": reivindicantes.get(row.get("usuario_reivindicante_id") or "", {}).get("ocupacao"),
         }
         for row in reivindicacoes.data
         if row.get("item_achado_id") in item_titles
@@ -144,10 +193,17 @@ async def painel_usuario(usuario_id: UUID) -> dict:
             "nivel_perfil": usuario.get("nivel_perfil") or _badge_by_karma(pontos),
             "pontos_luz": str(pontos),
             "badge_publica": _badge_by_karma(pontos),
+            "email": usuario.get("email") or "",
             "foto_url": usuario.get("foto_url") or "",
             "ocupacao": usuario.get("ocupacao") or "",
             "aceita_notificacoes_email": str(bool(usuario.get("aceita_notificacoes_email", True))).lower(),
-            "is_admin": str(usuario.get("papel") == "admin").lower(),
+            "is_admin": str((usuario.get("email") or "").lower() in settings.admin_emails).lower(),
+            "tipo_conta": usuario.get("tipo_conta") or "pessoal",
+            "empresa_nome": usuario.get("empresa_nome") or "",
+            "empresa_descricao": usuario.get("empresa_descricao") or "",
+            "empresa_endereco_publico": usuario.get("empresa_endereco_publico") or "",
+            "empresa_cidade": usuario.get("empresa_cidade") or "",
+            "empresa_uf": usuario.get("empresa_uf") or "",
         },
         "itens_postados": [
             {
