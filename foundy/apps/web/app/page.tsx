@@ -980,8 +980,8 @@ export default function Home() {
       {modalAtivo === 'acao' ? (
         <ModalAcaoRapida
           onClose={() => setModalAtivo(null)}
-          onEscolherAchei={() => requireSession('item', 'Para publicar item achado e necessario entrar.')}
-          onEscolherPerdi={() => requireSession('perdi', 'Para criar alerta de perda e necessario entrar.')}
+          onEscolherAchei={() => requireSession('item', 'Para publicar item achado é necessário entrar.')}
+          onEscolherPerdi={() => requireSession('perdi', 'Para criar alerta de perda é necessário entrar.')}
         />
       ) : null}
       {modalAtivo === 'item' && sessao ? <ModalItemAchado sessao={sessao} onClose={() => setModalAtivo(null)} onPublicado={(item) => { setItens((atuais) => [item, ...atuais]); setItemSelecionado(item); setModalAtivo(null); void carregarPainel(sessao) }} /> : null}
@@ -2344,7 +2344,7 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
   async function aplicarMedida(usuarioId: string, tipo: 'conta' | 'chat', denuncia?: Record<string, unknown>, denunciaTipo?: 'chat' | 'post') {
     const motivo = window.prompt(tipo === 'chat' ? 'Motivo do bloqueio de chat/desafios?' : 'Motivo da suspensão da conta?') ?? ''
     if (motivo.length < 5) return
-    const permanente = window.confirm('Aplicar por tempo indeterminado Clique em Cancelar para definir dias.')
+    const permanente = window.confirm('Aplicar por tempo indeterminado? Clique em Cancelar para definir dias.')
     const dias = permanente ? null : Number(window.prompt('Quantos dias?', '7') ?? '7')
     if (!permanente && (!Number.isFinite(dias) || Number(dias) < 1)) return
     const result = await adminAplicarMedidaUsuario(adminId, usuarioId, {
