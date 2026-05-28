@@ -27,6 +27,8 @@ class EmpresaCatalogoItemCreate(BaseModel):
 class EmpresaCatalogoItemUpdate(BaseModel):
     usuario_id: UUID
     status: CatalogStatus
+    retirado_por_nome: str | None = Field(default=None, min_length=2, max_length=120)
+    retirado_em: datetime | None = None
 
 
 async def _ensure_empresa_owner(empresa_id: UUID, usuario_id: UUID) -> dict:
@@ -41,10 +43,10 @@ async def _ensure_empresa_owner(empresa_id: UUID, usuario_id: UUID) -> dict:
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso permitido apenas para a conta empresarial dona do catalogo.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso permitido apenas para a conta empresarial dona do catálogo.")
     empresa = response.data[0]
     if empresa.get("tipo_conta") != "empresa":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Esta conta nao e empresarial.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Esta conta não é empresarial.")
     return empresa
 
 
@@ -55,9 +57,10 @@ async def listar_empresas(q: str | None = Query(default=None, max_length=80)) ->
         supabase.table("usuarios")
         .select(
             "id,nome,foto_url,ocupacao,tipo_conta,empresa_nome,empresa_descricao,"
-            "empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_verificada,criado_em"
+            "empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_verificada,empresa_catalogo_publico,criado_em"
         )
         .eq("tipo_conta", "empresa")
+        .eq("empresa_catalogo_publico", True)
         .is_("removido_em", "null")
         .order("empresa_verificada", desc=True)
         .order("criado_em", desc=True)
@@ -74,7 +77,7 @@ async def listar_catalogo_empresa(empresa_id: UUID, status_item: CatalogStatus |
     supabase = get_supabase()
     query = (
         supabase.table("empresa_catalogo_itens")
-        .select("id,empresa_usuario_id,titulo,descricao,categoria,codigo_interno,local_armazenamento,imagem_url,status,criado_em,atualizado_em")
+        .select("id,empresa_usuario_id,titulo,descricao,categoria,codigo_interno,local_armazenamento,imagem_url,status,retirado_por_nome,retirado_em,criado_em,atualizado_em")
         .eq("empresa_usuario_id", str(empresa_id))
         .order("criado_em", desc=True)
         .limit(200)
@@ -104,11 +107,11 @@ async def criar_item_catalogo(empresa_id: UUID, payload: EmpresaCatalogoItemCrea
                 "status": "disponivel",
             }
         )
-        .select("id,empresa_usuario_id,titulo,descricao,categoria,codigo_interno,local_armazenamento,imagem_url,status,criado_em,atualizado_em")
+        .select("id,empresa_usuario_id,titulo,descricao,categoria,codigo_interno,local_armazenamento,imagem_url,status,retirado_por_nome,retirado_em,criado_em,atualizado_em")
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel cadastrar o item no catalogo empresarial.")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível cadastrar o item no catálogo empresarial.")
     return response.data[0]
 
 
@@ -123,12 +126,18 @@ async def atualizar_status_catalogo(item_id: UUID, payload: EmpresaCatalogoItemU
         .execute()
     )
     if not item.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item do catalogo nao encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item do catálogo não encontrado.")
     await _ensure_empresa_owner(UUID(item.data[0]["empresa_usuario_id"]), payload.usuario_id)
+    updates = {"status": payload.status, "atualizado_em": datetime.now(timezone.utc).isoformat()}
+    if payload.status == "retirado":
+        if not payload.retirado_por_nome or not payload.retirado_em:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Informe nome, data e horário de retirada.")
+        updates["retirado_por_nome"] = payload.retirado_por_nome.strip()
+        updates["retirado_em"] = payload.retirado_em.isoformat()
     await (
         supabase.table("empresa_catalogo_itens")
-        .update({"status": payload.status, "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .update(updates)
         .eq("id", str(item_id))
         .execute()
     )
-    return {"mensagem": "Catalogo empresarial atualizado com sucesso."}
+    return {"mensagem": "Catálogo empresarial atualizado com sucesso."}

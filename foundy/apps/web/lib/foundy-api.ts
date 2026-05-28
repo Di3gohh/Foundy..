@@ -2,9 +2,11 @@ export type ItemCategory = 'documentos' | 'eletronicos' | 'chaves' | 'vestuario'
 
 export type ItemAchado = {
   id: string
+  usuario_id?: string | null
   titulo: string
   descricao: string
   categoria: ItemCategory
+  subcategoria?: string | null
   local_descricao: string | null
   latitude_aproximada: number
   longitude_aproximada: number
@@ -33,6 +35,7 @@ export type FoundySession = {
   aceita_notificacoes_email?: string
   is_admin?: string
   tipo_conta?: 'pessoal' | 'empresa'
+  empresa_catalogo_publico?: string
   empresa_nome?: string
   empresa_descricao?: string
   empresa_endereco_publico?: string
@@ -55,7 +58,8 @@ export type NotificationItem = {
 
 export type ChatSummary = {
   id: string
-  item_achado_id: string
+  item_achado_id: string | null
+  alerta_perdido_id?: string | null
   encontrador_usuario_id?: string | null
   dono_usuario_id?: string | null
   item_titulo: string
@@ -75,8 +79,17 @@ export type ChatSummary = {
 
 export type LostAlert = {
   id: string
+  usuario_id?: string | null
   titulo: string
   descricao: string
+  categoria?: ItemCategory | null
+  subcategoria?: string | null
+  local_descricao?: string | null
+  latitude_aproximada?: number | null
+  longitude_aproximada?: number | null
+  raio_metros?: number | null
+  distancia_metros?: number | null
+  imagem_url?: string | null
   status: string
   criado_em: string
   atualizado_em?: string
@@ -107,6 +120,7 @@ export type EmpresaFoundy = {
   empresa_cidade?: string | null
   empresa_uf?: string | null
   empresa_verificada?: boolean
+  empresa_catalogo_publico?: boolean
 }
 
 export type EmpresaCatalogoItem = {
@@ -119,6 +133,8 @@ export type EmpresaCatalogoItem = {
   local_armazenamento?: string | null
   imagem_url?: string | null
   status: 'disponivel' | 'retirado' | 'arquivado'
+  retirado_por_nome?: string | null
+  retirado_em?: string | null
   criado_em: string
   atualizado_em?: string
 }
@@ -135,7 +151,8 @@ export type UserDashboard = {
 export type MensagemChat = {
   id: string
   sala_chat_id: string | null
-  item_achado_id: string
+  item_achado_id: string | null
+  alerta_perdido_id?: string | null
   remetente_usuario_id: string | null
   destinatario_usuario_id: string | null
   mensagem: string
@@ -158,9 +175,9 @@ function validationMessage(message: string, location?: string) {
   const normalizedLocation = location?.toLowerCase() ?? ''
 
   if (normalizedLocation.includes('senha')) return 'A senha precisa ter pelo menos 8 caracteres.'
-  if (normalizedLocation.includes('email')) return 'Informe um e-mail valido para continuar.'
+  if (normalizedLocation.includes('email')) return 'Informe um e-mail válido para continuar.'
   if (normalizedLocation.includes('nome')) return 'Informe seu nome com pelo menos 2 caracteres.'
-  if (normalizedMessage.includes('json decode')) return 'Nao foi possivel entender os dados enviados. Atualize a pagina.'
+  if (normalizedMessage.includes('json decode')) return 'Não foi possível entender os dados enviados. Atualize a página.'
   return message
 }
 
@@ -219,7 +236,7 @@ export async function buscarItensAchadosProximos(params?: { latitude?: number; l
   return requestJson<ItemAchado[]>(
     `/itens-achados/proximos?${query.toString()}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
-    'Nao foi possivel carregar os itens achados.',
+    'Não foi possível carregar os itens achados.',
   )
 }
 
@@ -227,6 +244,7 @@ export async function cadastrarItemAchado(payload: {
   titulo: string
   descricao: string
   categoria: ItemCategory
+  subcategoria?: string | null
   latitude: number
   longitude: number
   local_descricao?: string
@@ -243,7 +261,7 @@ export async function cadastrarItemAchado(payload: {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
     },
-    'Nao foi possivel cadastrar o item achado.',
+    'Não foi possível cadastrar o item achado.',
   )
 }
 
@@ -253,7 +271,7 @@ export async function processarImagemComPrivacidade(file: File, textoExtraido = 
   formData.append('texto_extraido', textoExtraido)
 
   const response = await fetch(`${API_URL}/processamento/imagem`, { method: 'POST', body: formData })
-  if (!response.ok) await parseError(response, 'Nao foi possivel processar a imagem com filtros de privacidade.')
+  if (!response.ok) await parseError(response, 'Não foi possível processar a imagem com filtros de privacidade.')
 
   const payload = (await response.json()) as {
     imagem_webp_base64: string
@@ -282,7 +300,7 @@ export async function enviarRespostaDesafio(itemId: string, usuarioId: string, r
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ usuario_id: usuarioId, resposta_desafio: resposta }),
     },
-    'Nao foi possivel enviar a resposta do desafio.',
+    'Não foi possível enviar a resposta do desafio.',
   )
 }
 
@@ -297,7 +315,7 @@ export async function validarReivindicacao(
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
     },
-    'Nao foi possivel validar a resposta do desafio.',
+    'Não foi possível validar a resposta do desafio.',
   )
 }
 
@@ -306,7 +324,7 @@ export async function listarMensagensChat(salaChatId: string, usuarioId: string)
   return requestJson<MensagemChat[]>(
     `/itens-achados/salas/${salaChatId}/mensagens?${query.toString()}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
-    'Nao foi possivel carregar as mensagens do chat seguro.',
+    'Não foi possível carregar as mensagens do chat seguro.',
   )
 }
 
@@ -318,7 +336,7 @@ export async function enviarMensagemChat(salaChatId: string, usuarioId: string, 
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ usuario_id: usuarioId, mensagem }),
     },
-    'Nao foi possivel enviar a mensagem.',
+    'Não foi possível enviar a mensagem.',
   )
 }
 
@@ -330,7 +348,7 @@ export async function denunciarExtorsao(salaChatId: string, usuarioId: string, m
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ usuario_id: usuarioId, motivo, mensagem_chat_id: mensagemId ?? null, prova_descricao: provaDescricao ?? null, prova_arquivo_nome: provaArquivoNome ?? null }),
     },
-    'Nao foi possivel enviar a denuncia de extorsao.',
+    'Não foi possível enviar a denúncia de extorsão.',
   )
 }
 
@@ -338,6 +356,10 @@ export async function criarAlertaPerdido(payload: {
   usuario_id: string
   titulo: string
   descricao: string
+  categoria?: ItemCategory
+  subcategoria?: string
+  local_descricao?: string
+  imagem_url?: string | null
   hashtags: string[]
   latitude: number
   longitude: number
@@ -350,7 +372,34 @@ export async function criarAlertaPerdido(payload: {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
     },
-    'Nao foi possivel criar o alerta perdido.',
+    'Não foi possível criar o alerta perdido.',
+  )
+}
+
+export async function listarAlertasPerdidosProximos(params?: { latitude?: number; longitude?: number; raioMetros?: number }) {
+  const query = new URLSearchParams({
+    latitude: String(params?.latitude ?? -23.55052),
+    longitude: String(params?.longitude ?? -46.633308),
+    raio_metros: String(params?.raioMetros ?? 8000),
+    limite: '30',
+  })
+
+  return requestJson<LostAlert[]>(
+    `/notificacoes/alertas-perdidos/proximos?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar os alertas de perda próximos.',
+  )
+}
+
+export async function abrirChatParaAlertaPerdido(alertaId: string, usuarioId: string) {
+  return requestJson<{ mensagem: string; sala_chat_id: string }>(
+    `/notificacoes/alertas-perdidos/${alertaId}/encontrei`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ usuario_id: usuarioId }),
+    },
+    'Não foi possível abrir o chat com a pessoa que perdeu o item.',
   )
 }
 
@@ -359,7 +408,7 @@ export async function arquivarItemProprio(itemId: string, usuarioId: string) {
   return requestVoid(
     `/itens-achados/${itemId}?${query.toString()}`,
     { method: 'DELETE', headers: { Accept: 'application/json' } },
-    'Nao foi possivel apagar este item.',
+    'Não foi possível apagar este item.',
   )
 }
 
@@ -368,7 +417,7 @@ export async function arquivarAlertaPerdido(alertaId: string, usuarioId: string)
   return requestVoid(
     `/notificacoes/alertas-perdidos/${alertaId}?${query.toString()}`,
     { method: 'DELETE', headers: { Accept: 'application/json' } },
-    'Nao foi possivel apagar este alerta.',
+    'Não foi possível apagar este alerta.',
   )
 }
 
@@ -377,7 +426,7 @@ export async function listarNotificacoes(usuarioId: string) {
   return requestJson<NotificationItem[]>(
     `/notificacoes?${query.toString()}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
-    'Nao foi possivel carregar as notificacoes.',
+    'Não foi possível carregar as notificações.',
   )
 }
 
@@ -389,7 +438,7 @@ export async function marcarNotificacaoLida(notificacaoId: string, usuarioId: st
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ usuario_id: usuarioId }),
     },
-    'Nao foi possivel marcar a notificacao como lida.',
+    'Não foi possível marcar a notificação como lida.',
   )
 }
 
@@ -406,6 +455,7 @@ export async function cadastrarUsuario(payload: {
   empresa_endereco_publico?: string
   empresa_cidade?: string
   empresa_uf?: string
+  empresa_catalogo_publico?: boolean
 }) {
   return requestJson<{ mensagem: string; email_verificado?: boolean; login_liberado?: boolean }>(
     '/usuarios/cadastrar',
@@ -414,7 +464,7 @@ export async function cadastrarUsuario(payload: {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
     },
-    'Nao foi possivel criar a conta. Confira os dados e tente novamente.',
+    'Não foi possível criar a conta. Confira os dados e tente novamente.',
   )
 }
 
@@ -425,7 +475,7 @@ export async function listarEmpresasFoundy(q?: string) {
   return requestJson<EmpresaFoundy[]>(
     `/empresas${suffix}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
-    'Nao foi possivel carregar empresas parceiras.',
+    'Não foi possível carregar empresas parceiras.',
   )
 }
 
@@ -435,7 +485,7 @@ export async function listarCatalogoEmpresa(empresaId: string, statusItem: 'disp
   return requestJson<EmpresaCatalogoItem[]>(
     `/empresas/${empresaId}/catalogo?${query.toString()}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
-    'Nao foi possivel carregar o catalogo empresarial.',
+    'Não foi possível carregar o catálogo empresarial.',
   )
 }
 
@@ -455,7 +505,7 @@ export async function criarItemCatalogoEmpresa(empresaId: string, payload: {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
     },
-    'Nao foi possivel cadastrar o item no catalogo empresarial.',
+    'Não foi possível cadastrar o item no catálogo empresarial.',
   )
 }
 
@@ -467,7 +517,24 @@ export async function atualizarStatusCatalogoEmpresa(itemId: string, usuarioId: 
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ usuario_id: usuarioId, status: statusItem }),
     },
-    'Nao foi possivel atualizar o item empresarial.',
+    'Não foi possível atualizar o item empresarial.',
+  )
+}
+
+export async function marcarItemCatalogoRetirado(itemId: string, usuarioId: string, retiradoPorNome: string, retiradoEm: string) {
+  return requestJson<{ mensagem: string }>(
+    `/empresas/catalogo/${itemId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        usuario_id: usuarioId,
+        status: 'retirado',
+        retirado_por_nome: retiradoPorNome,
+        retirado_em: retiradoEm,
+      }),
+    },
+    'Não foi possível registrar a retirada do item empresarial.',
   )
 }
 
@@ -479,7 +546,7 @@ export async function entrarUsuario(payload: { email: string; senha: string }) {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
     },
-    'Nao foi possivel entrar.',
+    'Não foi possível entrar.',
   )
 }
 
@@ -491,7 +558,7 @@ export async function atualizarPerfil(usuarioId: string, payload: { nome?: strin
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
     },
-    'Nao foi possivel atualizar o perfil.',
+    'Não foi possível atualizar o perfil.',
   )
 }
 
@@ -499,7 +566,7 @@ export async function buscarPainelUsuario(usuarioId: string) {
   return requestJson<UserDashboard>(
     `/painel/usuarios/${usuarioId}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
-    'Nao foi possivel carregar sua pagina de usuario.',
+    'Não foi possível carregar sua página de usuário.',
   )
 }
 
@@ -516,16 +583,25 @@ export async function confirmarDevolucaoComAvaliacao(payload: {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(payload),
     },
-    'Nao foi possivel confirmar a devolucao.',
+    'Não foi possível confirmar a devolução.',
   )
 }
 
 export async function buscarPainelAdmin(usuarioId: string) {
   const query = new URLSearchParams({ admin_usuario_id: usuarioId })
-  return requestJson<{ usuarios: unknown[]; itens: ItemAchado[]; moderacao: unknown[]; denuncias?: unknown[] }>(
+  return requestJson<{
+    usuarios: unknown[]
+    empresas?: unknown[]
+    itens: ItemAchado[]
+    alertas_perdidos?: unknown[]
+    moderacao: unknown[]
+    denuncias?: unknown[]
+    denuncias_posts?: unknown[]
+    banidos?: unknown[]
+  }>(
     `/admin/painel?${query.toString()}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
-    'Nao foi possivel carregar o painel administrativo.',
+    'Não foi possível carregar o painel administrativo.',
   )
 }
 
@@ -537,7 +613,7 @@ export async function adminArquivarItem(adminUsuarioId: string, itemId: string, 
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ admin_usuario_id: adminUsuarioId, motivo }),
     },
-    'Nao foi possivel arquivar o item.',
+    'Não foi possível arquivar o item.',
   )
 }
 
@@ -549,6 +625,64 @@ export async function adminBanirUsuario(adminUsuarioId: string, usuarioId: strin
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ admin_usuario_id: adminUsuarioId, motivo, dias }),
     },
-    'Nao foi possivel banir o usuario.',
+    'Não foi possível banir o usuário.',
+  )
+}
+
+export async function adminAplicarMedidaUsuario(
+  adminUsuarioId: string,
+  usuarioId: string,
+  payload: { motivo: string; dias?: number | null; permanente?: boolean; tipo?: 'conta' | 'chat'; denuncia_id?: string; denuncia_tipo?: 'chat' | 'post' },
+) {
+  return requestJson<{ mensagem: string }>(
+    `/admin/usuarios/${usuarioId}/banir`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, ...payload }),
+    },
+    'Não foi possível aplicar a medida administrativa.',
+  )
+}
+
+export async function adminAvisarUsuario(adminUsuarioId: string, usuarioId: string, motivo: string, denunciaId?: string, denunciaTipo?: 'chat' | 'post') {
+  return requestJson<{ mensagem: string }>(
+    `/admin/usuarios/${usuarioId}/avisar`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, motivo, denuncia_id: denunciaId ?? null, denuncia_tipo: denunciaTipo ?? null }),
+    },
+    'Não foi possível enviar o aviso administrativo.',
+  )
+}
+
+export async function adminDesbanirUsuario(adminUsuarioId: string, usuarioId: string, motivo = 'Desbanimento manual pelo administrador Foundy.') {
+  return requestJson<{ mensagem: string }>(
+    `/admin/usuarios/${usuarioId}/desbanir`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, motivo }),
+    },
+    'Não foi possível desbanir o usuário.',
+  )
+}
+
+export async function denunciarPost(payload: {
+  usuario_id: string
+  item_achado_id?: string | null
+  alerta_perdido_id?: string | null
+  motivo_tipo: string
+  motivo: string
+}) {
+  return requestJson<{ mensagem: string }>(
+    '/itens-achados/denunciar-post',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    'Não foi possível enviar a denúncia do post.',
   )
 }

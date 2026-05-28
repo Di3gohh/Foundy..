@@ -26,51 +26,91 @@ EXTORTION_TERMS = {
     "pix",
     "p i x",
     "p.i.x",
+    "piix",
+    "p1x",
+    "pics",
     "chave pix",
     "qr code",
     "qrcode",
     "pagamento",
+    "pagamentos",
     "pagar",
     "pague",
     "pagou",
+    "pago",
+    "paga",
     "cobranca",
+    "cobrança",
     "cobro",
     "cobrar",
+    "cobrado",
     "taxa",
     "taxinha",
+    "taxinha de entrega",
+    "ajuda de custo",
     "resgate",
+    "resgatar",
     "recompensa obrigatoria",
     "recompensa minima",
+    "gratificacao obrigatoria",
     "dinheiro",
+    "din",
     "deposito",
+    "depósito",
     "transferencia",
+    "transferência",
     "ted",
     "doc",
     "boleto",
     "cartao",
+    "cartão",
     "comprovante",
     "frete antecipado",
+    "frete",
     "sinal",
     "valor",
+    "valores",
     "grana",
+    "cash",
+    "mb way",
+    "paypal",
+    "picpay",
+    "mercado pago",
+    "cripto",
+    "bitcoin",
 }
 
 COERCION_TERMS = {
     "so devolvo",
+    "só devolvo",
     "so entrego",
+    "só entrego",
     "nao devolvo",
+    "não devolvo",
     "nao entrego",
+    "não entrego",
     "para devolver",
     "para entregar",
     "se pagar",
+    "se nao pagar",
+    "se não pagar",
     "se mandar",
+    "se enviar",
     "manda o pix",
     "envia o pix",
     "faz o pix",
+    "passa o pix",
     "sem pagamento",
     "antes da entrega",
     "depois que pagar",
     "paga primeiro",
+    "so depois",
+    "só depois",
+    "libero quando",
+    "te devolvo quando",
+    "te entrego quando",
+    "nao vou devolver",
+    "não vou devolver",
 }
 
 LEETSPEAK_TABLE = str.maketrans(
@@ -120,13 +160,13 @@ def scan_item_text(title: str, description: str) -> ScanResult:
     reasons: list[str] = []
 
     if any(term in normalized for term in {normalize_text(term) for term in ILLICIT_TERMS}):
-        reasons.append("O texto contem termos nao permitidos para publicacao.")
+        reasons.append("O texto contém termos não permitidos para publicação.")
     if EMAIL_RE.search(original):
-        reasons.append("Remova e-mails da descricao publica.")
+        reasons.append("Remova e-mails da descrição pública.")
     if CPF_RE.search(original):
-        reasons.append("Remova CPF ou documentos completos da descricao publica.")
+        reasons.append("Remova CPF ou documentos completos da descrição pública.")
     if PHONE_RE.search(original):
-        reasons.append("Remova telefones da descricao publica.")
+        reasons.append("Remova telefones da descrição pública.")
 
     return ScanResult(blocked=bool(reasons), flagged=bool(reasons), reasons=reasons)
 
@@ -147,11 +187,28 @@ def scan_chat_message(body: str) -> ScanResult:
     has_coercion = bool(coercion_matches)
     mentions_return = any(fragment in compact for fragment in ["devolv", "entreg", "retir", "resgat"])
 
+    compact_without_spaces = re.sub(r"\s+", "", normalized)
+    evasive_pix = bool(re.search(r"\bp\s*[\W_]*i\s*[\W_]*x\b", normalized)) or "pixin" in compact
+    money_amount = bool(re.search(r"\b(?:r\$|rs)\s*\d+|\b\d+\s*(?:reais|conto|contos)\b", normalized))
+    phone_or_key_like = bool(re.search(r"\b\d{2,}\s*[-.]?\s*\d{2,}\s*[-.]?\s*\d{2,}\b", normalized))
+
+    if evasive_pix:
+        payment_matches.append("pix escrito de forma disfarçada")
+        has_payment_term = True
+
+    if money_amount and mentions_return:
+        payment_matches.append("valor em dinheiro associado à devolução")
+        has_payment_term = True
+
+    if phone_or_key_like and ("chave" in normalized or "pix" in compact_without_spaces):
+        payment_matches.append("possível chave de pagamento")
+        has_payment_term = True
+
     if has_payment_term and (has_coercion or "devolv" in normalized):
-        reasons = ["Mensagem sinalizada por possivel extorsao financeira."]
+        reasons = ["Mensagem sinalizada por possível extorsão financeira."]
         reasons.append(f"Termos financeiros detectados: {', '.join(payment_matches[:4])}.")
         if coercion_matches:
-            reasons.append(f"Pressao ou condicao detectada: {', '.join(coercion_matches[:3])}.")
+            reasons.append(f"Pressão ou condição detectada: {', '.join(coercion_matches[:3])}.")
         return ScanResult(
             blocked=False,
             flagged=True,
@@ -163,7 +220,7 @@ def scan_chat_message(body: str) -> ScanResult:
             blocked=False,
             flagged=True,
             reasons=[
-                "Mensagem sinalizada por associar pagamento ao processo de devolucao.",
+                "Mensagem sinalizada por associar pagamento ao processo de devolução.",
                 f"Termos financeiros detectados: {', '.join(payment_matches[:4])}.",
             ],
         )

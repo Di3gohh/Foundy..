@@ -15,7 +15,7 @@ async function confirmarEmail(token: string) {
       const payload = (await response.json().catch(() => null)) as { detail?: string } | null
       return {
         ok: false,
-        mensagem: payload?.detail ?? 'Nao foi possivel confirmar este e-mail. O token pode ter expirado.',
+        mensagem: payload?.detail ?? 'Não foi possível confirmar este e-mail. O token pode ter expirado.',
       }
     }
 
@@ -24,7 +24,7 @@ async function confirmarEmail(token: string) {
   } catch {
     return {
       ok: false,
-      mensagem: 'Nao conseguimos falar com a API agora. Tente novamente em alguns minutos.',
+      mensagem: 'Não conseguimos falar com a API agora. Tente novamente em alguns minutos.',
     }
   }
 }
@@ -38,7 +38,7 @@ export default async function VerificarEmailPage({
   const token = params.token?.trim()
   const resultado = token
     ? await confirmarEmail(token)
-    : { ok: false, mensagem: 'Link sem token de verificacao. Solicite um novo e-mail de confirmacao.' }
+    : { ok: false, mensagem: 'Link sem token de verificação. Solicite um novo e-mail de confirmação.' }
 
   return (
     <main className="foundy-app-shell grid min-h-dvh place-items-center bg-foundy-background px-4 py-10 text-foundy-foreground">
@@ -47,7 +47,7 @@ export default async function VerificarEmailPage({
           {resultado.ok ? 'OK' : '!'}
         </span>
         <h1 className="mt-5 text-3xl font-black">
-          {resultado.ok ? 'E-mail confirmado' : 'Nao foi possivel confirmar'}
+          {resultado.ok ? 'E-mail confirmado' : 'Não foi possível confirmar'}
         </h1>
         <p className="mt-3 text-sm leading-6 text-foundy-muted">{resultado.mensagem}</p>
         <Link className="mt-6 inline-flex h-12 items-center justify-center rounded-xl bg-foundy-blue px-5 text-sm font-black text-white" href="/">

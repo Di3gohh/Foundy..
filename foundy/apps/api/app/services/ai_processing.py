@@ -70,6 +70,7 @@ def generate_hashtag_descriptors(*text_blocks: str) -> list[str]:
 
 def blur_faces_and_sensitive_regions(image_bytes: bytes, extracted_text: str = "") -> tuple[bytes, list[str], list[str]]:
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    image.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
     cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
 
@@ -97,7 +98,7 @@ def blur_faces_and_sensitive_regions(image_bytes: bytes, extracted_text: str = "
             generated_tags.append("#DocumentoPessoal")
 
     output = BytesIO()
-    image.save(output, format="WEBP", quality=82, method=6)
+    image.save(output, format="WEBP", quality=76, method=6)
     return output.getvalue(), generated_tags, reasons
 
 

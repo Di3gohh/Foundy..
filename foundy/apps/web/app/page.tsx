@@ -4,14 +4,20 @@ import dynamic from 'next/dynamic'
 import {
   Ban,
   Bell,
+  Bike,
+  BookOpen,
   Building2,
   Camera,
   CheckCircle2,
   Clock,
+  FileText,
   Flag,
+  Gem,
+  Headphones,
   Info,
   Inbox,
   KeyRound,
+  Laptop,
   LocateFixed,
   LogOut,
   MapPin,
@@ -31,12 +37,11 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import type { ChangeEvent, ReactNode } from 'react'
+import type { ChangeEvent, MutableRefObject, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   adminArquivarItem,
-  adminBanirUsuario,
   arquivarAlertaPerdido,
   arquivarItemProprio,
   atualizarPerfil,
@@ -67,9 +72,17 @@ import {
   type FoundySession,
   type ItemAchado,
   type ItemCategory,
+  type LostAlert,
   type MensagemChat,
   type NotificationItem,
   type UserDashboard,
+  abrirChatParaAlertaPerdido,
+  listarAlertasPerdidosProximos,
+  denunciarPost,
+  adminAplicarMedidaUsuario,
+  adminAvisarUsuario,
+  adminDesbanirUsuario,
+  marcarItemCatalogoRetirado,
 } from '@/lib/foundy-api'
 
 const MapaInterativo = dynamic(() => import('@/components/MapaInterativo'), {
@@ -85,7 +98,7 @@ const MapaPerimetro = dynamic(() => import('@/components/MapaPerimetro'), {
   ssr: false,
   loading: () => (
     <div className="grid min-h-[260px] place-items-center rounded-2xl border border-white/10 bg-slate-900 text-sm text-slate-300">
-      Carregando mapa do perimetro...
+      Carregando mapa do perímetro...
     </div>
   ),
 })
@@ -111,6 +124,33 @@ type ModalAtivo =
 
 type GeoPoint = { latitude: number; longitude: number }
 type MainTab = 'feed' | 'mapa' | 'seguranca' | 'usuario' | 'empresas' | 'empresaPainel' | 'admin'
+type FeedMode = 'achados' | 'perdidos'
+type ItemFilter =
+  | 'todos'
+  | 'chaves'
+  | 'celulares'
+  | 'fones'
+  | 'notebooks'
+  | 'documentos'
+  | 'carteiras'
+  | 'mochilas'
+  | 'roupas'
+  | 'pets'
+  | 'bicicletas'
+  | 'joias'
+  | 'livros'
+  | 'outros'
+
+type AdminData = {
+  usuarios: unknown[]
+  empresas?: unknown[]
+  itens: ItemAchado[]
+  alertas_perdidos?: unknown[]
+  moderacao: unknown[]
+  denuncias?: unknown[]
+  denuncias_posts?: unknown[]
+  banidos?: unknown[]
+}
 
 const defaultPoint: GeoPoint = { latitude: -23.55052, longitude: -46.633308 }
 const sessionStorageKey = 'foundy-session-v2'
@@ -129,19 +169,36 @@ const placeholdersPorCategoria: Record<ItemCategory, string> = {
 
 const categorias: Record<ItemCategory, { label: string; description: string; Icon: LucideIcon }> = {
   chaves: { label: 'Chaves', description: 'Chaves, chaveiros e controles pequenos.', Icon: KeyRound },
-  eletronicos: { label: 'Celulares', description: 'Celulares, fones e acessorios digitais.', Icon: Smartphone },
+  eletronicos: { label: 'Celulares', description: 'Celulares, fones e acessórios digitais.', Icon: Smartphone },
   documentos: { label: 'Documentos', description: 'Carteiras, RG, CPF e credenciais.', Icon: Wallet },
-  vestuario: { label: 'Vestuario', description: 'Jaquetas, bones, mochilas e pecas pessoais.', Icon: Shirt },
+  vestuario: { label: 'Vestuário', description: 'Jaquetas, bonés, mochilas e peças pessoais.', Icon: Shirt },
   outros: { label: 'Pets e outros', description: 'Pets, coleiras, brinquedos e objetos diversos.', Icon: PawPrint },
+}
+
+const filtrosFoundy: Record<ItemFilter, { label: string; description: string; Icon: LucideIcon; categoria?: ItemCategory; keywords: string[] }> = {
+  todos: { label: 'Tudo', description: 'Achados e perdas sem filtro.', Icon: Search, keywords: [] },
+  chaves: { label: 'Chaves', description: 'Chaves, chaveiros, tags e controles.', Icon: KeyRound, categoria: 'chaves', keywords: ['chave', 'chaveiro', 'controle', 'tag'] },
+  celulares: { label: 'Celulares', description: 'Aparelhos, capinhas e carregadores.', Icon: Smartphone, categoria: 'eletronicos', keywords: ['celular', 'iphone', 'samsung', 'motorola', 'capinha', 'carregador'] },
+  fones: { label: 'Fones', description: 'Fones Bluetooth, headsets e cases.', Icon: Headphones, categoria: 'eletronicos', keywords: ['fone', 'airpods', 'headset', 'earbud', 'case'] },
+  notebooks: { label: 'Notebooks', description: 'Computadores, tablets e acessórios.', Icon: Laptop, categoria: 'eletronicos', keywords: ['notebook', 'tablet', 'ipad', 'laptop', 'computador'] },
+  documentos: { label: 'Documentos', description: 'RG, CPF, crachás e cartões protegidos.', Icon: FileText, categoria: 'documentos', keywords: ['documento', 'rg', 'cpf', 'cnh', 'cracha', 'cartao'] },
+  carteiras: { label: 'Carteiras', description: 'Carteiras, porta-cartões e bolsas pequenas.', Icon: Wallet, categoria: 'documentos', keywords: ['carteira', 'wallet', 'porta cartao', 'porta-cartao'] },
+  mochilas: { label: 'Mochilas', description: 'Bolsas, malas, estojos e sacolas.', Icon: Building2, categoria: 'vestuario', keywords: ['mochila', 'bolsa', 'mala', 'estojo', 'sacola'] },
+  roupas: { label: 'Roupas', description: 'Casacos, bonés, uniformes e acessórios.', Icon: Shirt, categoria: 'vestuario', keywords: ['casaco', 'jaqueta', 'bone', 'boné', 'camiseta', 'uniforme', 'roupa'] },
+  pets: { label: 'Pets', description: 'Animais, coleiras e itens de pets.', Icon: PawPrint, categoria: 'outros', keywords: ['pet', 'cachorro', 'gato', 'coleira', 'animal'] },
+  bicicletas: { label: 'Bicicletas', description: 'Bikes, capacetes e acessórios de mobilidade.', Icon: Bike, categoria: 'outros', keywords: ['bicicleta', 'bike', 'capacete', 'patinete'] },
+  joias: { label: 'Joias', description: 'Anéis, correntes, relógios e bijuterias.', Icon: Gem, categoria: 'outros', keywords: ['anel', 'corrente', 'colar', 'pulseira', 'relogio', 'relógio', 'joia'] },
+  livros: { label: 'Livros', description: 'Livros, cadernos, apostilas e materiais.', Icon: BookOpen, categoria: 'outros', keywords: ['livro', 'caderno', 'apostila', 'material', 'estojo'] },
+  outros: { label: 'Outros', description: 'Objetos que não entram nos filtros acima.', Icon: Sparkles, categoria: 'outros', keywords: ['outro', 'diverso', 'objeto'] },
 }
 
 const itensDemonstracao: ItemAchado[] = [
   {
     id: 'demo-1',
     titulo: 'Chave Yale com chaveiro azul',
-    descricao: 'Encontrada perto da saida principal da estacao. O endereco exato foi mascarado.',
+    descricao: 'Encontrada perto da saída principal da estação. O endereço exato foi mascarado.',
     categoria: 'chaves',
-    local_descricao: 'Regiao da estacao central',
+    local_descricao: 'Região da estação central',
     latitude_aproximada: -23.5489,
     longitude_aproximada: -46.6372,
     raio_mascara_metros: 500,
@@ -149,7 +206,7 @@ const itensDemonstracao: ItemAchado[] = [
     imagem_url: placeholdersPorCategoria.chaves,
     status: 'publicado',
     criado_em: new Date().toISOString(),
-    desafio_pergunta: 'Qual detalhe so o dono saberia informar?',
+    desafio_pergunta: 'Qual detalhe só o dono saberia informar?',
     chat_desbloqueado: false,
     tags_ia: ['chaveyale', 'fitaazul'],
     hashtags_ia: ['#ChaveYale', '#FitaAzul'],
@@ -159,7 +216,7 @@ const itensDemonstracao: ItemAchado[] = [
     titulo: 'Carteira preta com documento protegido',
     descricao: 'Encontrada em cafeteria local. Dados pessoais devem ser descritos apenas pelo verdadeiro dono.',
     categoria: 'documentos',
-    local_descricao: 'Proximo a praca principal',
+    local_descricao: 'Próximo à praça principal',
     latitude_aproximada: -23.5533,
     longitude_aproximada: -46.6312,
     raio_mascara_metros: 500,
@@ -190,6 +247,43 @@ function formatDistance(meters: number | null) {
   return `${(meters / 1000).toFixed(1).replace('.', ',')} km`
 }
 
+function textoPesquisavelItem(item: ItemAchado | LostAlert) {
+  return `${item.titulo} ${item.descricao} ${'subcategoria' in item ? item.subcategoria ?? '' : ''} ${'hashtags_ia' in item ? (item.hashtags_ia ?? []).join(' ') : ''}`.toLowerCase()
+}
+
+function itemMatchesFilter(item: ItemAchado | LostAlert, filtro: ItemFilter) {
+  if (filtro === 'todos') return true
+  const config = filtrosFoundy[filtro]
+  const categoria = 'categoria' in item ? item.categoria : null
+  if (config.categoria && categoria === config.categoria) {
+    const texto = textoPesquisavelItem(item)
+    if (filtro === 'outros') return true
+    return config.keywords.some((keyword) => texto.includes(keyword)) || item.subcategoria === filtro
+  }
+  const texto = textoPesquisavelItem(item)
+  return config.keywords.some((keyword) => texto.includes(keyword)) || item.subcategoria === filtro
+}
+
+function alertaParaMapa(alerta: LostAlert): ItemAchado {
+  return {
+    id: `perda-${alerta.id}`,
+    usuario_id: alerta.usuario_id ?? null,
+    titulo: alerta.titulo,
+    descricao: alerta.descricao,
+    categoria: alerta.categoria ?? 'outros',
+    subcategoria: alerta.subcategoria ?? null,
+    local_descricao: alerta.local_descricao ?? 'Região aproximada da perda',
+    latitude_aproximada: alerta.latitude_aproximada ?? defaultPoint.latitude,
+    longitude_aproximada: alerta.longitude_aproximada ?? defaultPoint.longitude,
+    raio_mascara_metros: alerta.raio_metros ?? 900,
+    distancia_metros: alerta.distancia_metros ?? null,
+    imagem_url: alerta.imagem_url ?? null,
+    status: 'perdido',
+    criado_em: alerta.criado_em,
+    hashtags_ia: alerta.subcategoria ? [`#${alerta.subcategoria}`] : ['#Perdido'],
+  }
+}
+
 function isAdmin(session: FoundySession | null) {
   return session?.email?.toLowerCase() === supportEmail
 }
@@ -201,8 +295,10 @@ export default function Home() {
   const [modalAtivo, setModalAtivo] = useState<ModalAtivo>(null)
   const [mensagemSistema, setMensagemSistema] = useState('Carregando o Radar local...')
   const [carregando, setCarregando] = useState(true)
-  const [filtro, setFiltro] = useState<ItemCategory | 'todos'>('todos')
+  const [filtro, setFiltro] = useState<ItemFilter>('todos')
+  const [feedMode, setFeedMode] = useState<FeedMode>('achados')
   const [buscaTexto, setBuscaTexto] = useState('')
+  const [perdasProximas, setPerdasProximas] = useState<LostAlert[]>([])
   const [localUsuario, setLocalUsuario] = useState<GeoPoint | null>(null)
   const [sessao, setSessao] = useState<FoundySession | null>(null)
   const [painel, setPainel] = useState<UserDashboard | null>(null)
@@ -217,13 +313,14 @@ export default function Home() {
   const [chatFeedback, setChatFeedback] = useState('')
   const [chatCarregando, setChatCarregando] = useState(false)
   const [denunciaDisponivel, setDenunciaDisponivel] = useState(false)
-  const [adminData, setAdminData] = useState<{ usuarios: unknown[]; itens: ItemAchado[]; moderacao: unknown[]; denuncias?: unknown[] } | null>(null)
+  const [adminData, setAdminData] = useState<AdminData | null>(null)
   const [empresas, setEmpresas] = useState<EmpresaFoundy[]>([])
   const [empresaBusca, setEmpresaBusca] = useState('')
   const [empresaSelecionada, setEmpresaSelecionada] = useState<EmpresaFoundy | null>(null)
   const [catalogoEmpresa, setCatalogoEmpresa] = useState<EmpresaCatalogoItem[]>([])
   const [catalogoMensagem, setCatalogoMensagem] = useState('Catálogo empresarial pronto para consulta.')
   const mapSectionRef = useRef<HTMLDivElement | null>(null)
+  const feedItemRefs = useRef<Record<string, HTMLElement | null>>({})
 
   const carregarPainel = useCallback(async (session: FoundySession) => {
     try {
@@ -233,25 +330,34 @@ export default function Home() {
       setSessao((atual) => (atual ? { ...atual, ...dados.usuario } : dados.usuario))
       localStorage.setItem(sessionStorageKey, JSON.stringify({ ...session, ...dados.usuario }))
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel carregar sua area.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível carregar sua área.')
     }
   }, [])
 
   const carregarItens = useCallback(async (latitude?: number, longitude?: number, selecionarPrimeiro = true) => {
     setCarregando(true)
-    setMensagemSistema('Atualizando itens com privacidade geografica ativa...')
+    setMensagemSistema('Atualizando itens com privacidade geográfica ativa...')
     try {
       const dados = await buscarItensAchadosProximos({ latitude, longitude })
       const lista = dados.length > 0 ? dados : itensDemonstracao
       setItens(lista)
       setItemSelecionado((atual) => (selecionarPrimeiro ? atual ?? lista[0] ?? null : atual))
-      setMensagemSistema(dados.length > 0 ? 'Radar atualizado com sucesso.' : 'Mostrando exemplos ate surgirem itens reais na regiao.')
+      setMensagemSistema(dados.length > 0 ? 'Radar atualizado com sucesso.' : 'Mostrando exemplos até surgirem itens reais na região.')
     } catch (error) {
       setItens(itensDemonstracao)
       setItemSelecionado(itensDemonstracao[0])
-      setMensagemSistema(error instanceof Error ? error.message : 'Servidor indisponivel. Mostrando modo demonstracao.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Servidor indisponível. Mostrando modo demonstração.')
     } finally {
       setCarregando(false)
+    }
+  }, [])
+
+  const carregarPerdas = useCallback(async (latitude?: number, longitude?: number) => {
+    try {
+      const dados = await listarAlertasPerdidosProximos({ latitude, longitude })
+      setPerdasProximas(dados)
+    } catch {
+      setPerdasProximas([])
     }
   }, [])
 
@@ -267,6 +373,7 @@ export default function Home() {
 
   useEffect(() => {
     void carregarItens()
+    void carregarPerdas()
     const stored = localStorage.getItem(sessionStorageKey)
     if (stored) {
       try {
@@ -283,7 +390,7 @@ export default function Home() {
       localStorage.setItem(firstVisitKey, '1')
       setModalAtivo('auth')
     }
-  }, [carregarItens, carregarPainel])
+  }, [carregarItens, carregarPainel, carregarPerdas])
 
   useEffect(() => {
     if (activeTab === 'empresas') void carregarEmpresas(empresaBusca)
@@ -308,10 +415,10 @@ export default function Home() {
       try {
         const dados = await listarMensagensChat(salaChatId, sessao.usuario_id)
         if (!active) return
-        setMensagensChat(dados)
+        setMensagensChat((atuais) => (dados.length > 0 || atuais.length === 0 ? dados : atuais))
         setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
       } catch (error) {
-        setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel carregar o chat seguro.')
+        setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível carregar o chat seguro.')
       } finally {
         if (active) setChatCarregando(false)
       }
@@ -348,7 +455,7 @@ export default function Home() {
             { event: 'INSERT', schema: 'public', table: 'mensagens_chat', filter: `sala_chat_id=eq.${salaChatId}` },
             () => {
               void listarMensagensChat(salaChatId, sessao.usuario_id).then((dados) => {
-                setMensagensChat(dados)
+                setMensagensChat((atuais) => (dados.length > 0 || atuais.length === 0 ? dados : atuais))
                 setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
               })
               void carregarPainel(sessao)
@@ -360,7 +467,7 @@ export default function Home() {
           void client.removeChannel(channel)
         }
       } catch {
-        setMensagemSistema('Tempo real indisponivel agora. Mantivemos atualizacao automatica por seguranca.')
+        setMensagemSistema('Tempo real indisponível agora. Mantivemos atualização automática por segurança.')
       }
     }
 
@@ -374,12 +481,27 @@ export default function Home() {
   const itensFiltrados = useMemo(() => {
     const termo = buscaTexto.trim().toLowerCase()
     return itens.filter((item) => {
-      const bateFiltro = filtro === 'todos' || item.categoria === filtro
+      const bateFiltro = itemMatchesFilter(item, filtro)
       if (!bateFiltro) return false
       if (!termo) return true
-      return `${item.titulo} ${item.descricao} ${(item.hashtags_ia ?? []).join(' ')}`.toLowerCase().includes(termo)
+      return textoPesquisavelItem(item).includes(termo)
     })
   }, [buscaTexto, filtro, itens])
+
+  const perdasFiltradas = useMemo(() => {
+    const termo = buscaTexto.trim().toLowerCase()
+    return perdasProximas.filter((alerta) => {
+      const bateFiltro = itemMatchesFilter(alerta, filtro)
+      if (!bateFiltro) return false
+      if (!termo) return true
+      return textoPesquisavelItem(alerta).includes(termo)
+    })
+  }, [buscaTexto, filtro, perdasProximas])
+
+  const mapaItens = useMemo(
+    () => [...itensFiltrados, ...perdasFiltradas.map(alertaParaMapa)],
+    [itensFiltrados, perdasFiltradas],
+  )
 
   const unreadCount = notificacoes.filter((item) => !item.lida_em).length
 
@@ -406,10 +528,10 @@ export default function Home() {
 
   function obterMeuLocal() {
     if (!navigator.geolocation) {
-      setMensagemSistema('Este navegador nao suporta geolocalizacao.')
+      setMensagemSistema('Este navegador não suporta geolocalização.')
       return
     }
-    setMensagemSistema('Solicitando sua posicao aproximada...')
+    setMensagemSistema('Solicitando sua posição aproximada...')
     navigator.geolocation.getCurrentPosition(
       (posicao) => {
         const ponto = { latitude: posicao.coords.latitude, longitude: posicao.coords.longitude }
@@ -417,8 +539,9 @@ export default function Home() {
         setItemSelecionado(null)
         mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         void carregarItens(ponto.latitude, ponto.longitude, false)
+        void carregarPerdas(ponto.latitude, ponto.longitude)
       },
-      () => setMensagemSistema('Nao foi possivel acessar sua localizacao. Mantivemos a busca regional padrao.'),
+      () => setMensagemSistema('Não foi possível acessar sua localização. Mantivemos a busca regional padrão.'),
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
     )
   }
@@ -449,10 +572,72 @@ export default function Home() {
     mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  function verItemNoFeed(item: ItemAchado) {
+    setItemSelecionado(item)
+    setActiveTab('feed')
+    if (item.id.startsWith('perda-')) setFeedMode('perdidos')
+    else setFeedMode('achados')
+    window.setTimeout(() => {
+      feedItemRefs.current[item.id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 160)
+  }
+
+  function selecionarPerdaNoMapa(alerta: LostAlert) {
+    const itemMapa = alertaParaMapa(alerta)
+    setItemSelecionado(itemMapa)
+    setActiveTab('mapa')
+    setMensagemSistema(`Mapa aproximado do alerta: ${alerta.titulo}.`)
+    mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  async function abrirChatDePerda(alerta: LostAlert) {
+    if (!sessao) {
+      requireSession('auth', 'Entre para avisar que encontrou um item parecido.')
+      return
+    }
+    if (alerta.usuario_id === sessao.usuario_id) {
+      setMensagemSistema('Este alerta foi criado por você.')
+      return
+    }
+    try {
+      const resultado = await abrirChatParaAlertaPerdido(alerta.id, sessao.usuario_id)
+      setSalaChatId(resultado.sala_chat_id)
+      setChatAtual(null)
+      setMensagensChat([])
+      setChatFeedback(resultado.mensagem)
+      setModalAtivo('chat')
+      void carregarPainel(sessao)
+    } catch (error) {
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível abrir o chat deste alerta.')
+    }
+  }
+
+  async function denunciarPostPublico(item: ItemAchado | LostAlert, tipo: 'item' | 'perda') {
+    if (!sessao) {
+      requireSession('auth', 'Entre para enviar uma denúncia de segurança.')
+      return
+    }
+    const motivoTipo = window.prompt('Tipo de denúncia: dados pessoais, endereço exato, documento exposto, conteúdo inadequado ou outro?', 'conteudo_inadequado') ?? ''
+    const motivo = window.prompt('Explique o motivo da denúncia para a moderação.') ?? ''
+    if (motivoTipo.trim().length < 3 || motivo.trim().length < 5) return
+    try {
+      const resposta = await denunciarPost({
+        usuario_id: sessao.usuario_id,
+        item_achado_id: tipo === 'item' ? item.id : null,
+        alerta_perdido_id: tipo === 'perda' ? item.id : null,
+        motivo_tipo: motivoTipo,
+        motivo,
+      })
+      setMensagemSistema(resposta.mensagem)
+    } catch (error) {
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a denúncia do post.')
+    }
+  }
+
   async function confirmarRespostaDesafio() {
     if (!sessao || !itemSelecionado) return
     if (respostaDesafio.trim().length < 2) {
-      setMensagemSistema('Digite uma resposta valida para o desafio.')
+      setMensagemSistema('Digite uma resposta válida para o desafio.')
       return
     }
     try {
@@ -463,7 +648,7 @@ export default function Home() {
       setModalAtivo('resposta-enviada')
       void carregarPainel(sessao)
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel enviar a resposta.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a resposta.')
     }
   }
 
@@ -482,7 +667,7 @@ export default function Home() {
       }
       void carregarPainel(sessao)
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel validar a resposta.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível validar a resposta.')
     }
   }
 
@@ -490,14 +675,14 @@ export default function Home() {
     setSalaChatId(chat.id)
     setChatAtual(chat)
     setChatFeedback(chat.status === 'encerrado' ? 'Esta conversa foi resolvida e ficou salva no histórico.' : '')
-    const item = itens.find((found) => found.id === chat.item_achado_id)
+    const item = chat.item_achado_id ? itens.find((found) => found.id === chat.item_achado_id) : null
     if (item) setItemSelecionado(item)
     setModalAtivo('chat')
   }
 
   async function enviarMensagemNoChat() {
     if (!sessao || !salaChatId) {
-      setMensagemSistema('Abra uma conversa valida antes de enviar mensagem.')
+      setMensagemSistema('Abra uma conversa válida antes de enviar mensagem.')
       return
     }
     const text = mensagemChatAtual.trim()
@@ -511,18 +696,19 @@ export default function Home() {
       setMensagemChatAtual('')
       setChatFeedback('Mensagem enviada e registrada na conversa.')
       setDenunciaDisponivel((atual) => atual || enviada.denunciar_extorsao_visivel)
-      void listarMensagensChat(salaChatId, sessao.usuario_id).then(setMensagensChat).catch(() => undefined)
+      void listarMensagensChat(salaChatId, sessao.usuario_id)
+        .then((dados) => setMensagensChat((atuais) => (dados.length > 0 || atuais.length === 0 ? dados : atuais)))
+        .catch(() => undefined)
       void carregarPainel(sessao)
     } catch (error) {
-      setMensagemSistema(error instanceof Error ? error.message : 'Nao foi possivel enviar a mensagem.')
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível enviar a mensagem.')
     }
   }
 
   async function clicarNotificacao(notificacao: NotificationItem) {
     if (!sessao) return
-    if (!notificacao.lida_em) {
-      void marcarNotificacaoLida(notificacao.id, sessao.usuario_id).then(() => carregarPainel(sessao))
-    }
+    setNotificacoes((atuais) => atuais.filter((item) => item.id !== notificacao.id))
+    void marcarNotificacaoLida(notificacao.id, sessao.usuario_id).then(() => carregarPainel(sessao)).catch(() => undefined)
     if (notificacao.sala_chat_id) {
       setSalaChatId(notificacao.sala_chat_id)
       let chat = painel?.chats.find((item) => item.id === notificacao.sala_chat_id) ?? null
@@ -552,6 +738,11 @@ export default function Home() {
     if (notificacao.item_achado_id) {
       const item = itens.find((found) => found.id === notificacao.item_achado_id)
       if (item) selecionarItemNoMapa(item)
+      setModalAtivo(null)
+    }
+    if (notificacao.alerta_perdido_id) {
+      const alerta = perdasProximas.find((perda) => perda.id === notificacao.alerta_perdido_id)
+      if (alerta) selecionarPerdaNoMapa(alerta)
       setModalAtivo(null)
     }
   }
@@ -664,20 +855,30 @@ export default function Home() {
         ) : (
           <RadarSection
             viewMode={activeTab === 'mapa' ? 'mapa' : 'feed'}
-            itens={itensFiltrados}
+            itens={activeTab === 'mapa' ? mapaItens : itensFiltrados}
+            perdas={perdasFiltradas}
+            feedMode={feedMode}
             totalItens={itens.length}
+            totalPerdas={perdasProximas.length}
             itemSelecionado={itemSelecionado}
             localUsuario={localUsuario}
             mapRef={mapSectionRef}
+            feedItemRefs={feedItemRefs}
             mensagemSistema={mensagemSistema}
             carregando={carregando}
             getDistance={getDistance}
             onSelectItem={setItemSelecionado}
+            onViewItem={verItemNoFeed}
+            onFeedModeChange={setFeedMode}
             onSearch={() => setModalAtivo('busca')}
             onNearby={obterMeuLocal}
-            onRefresh={() => void carregarItens(localUsuario?.latitude, localUsuario?.longitude)}
+            onRefresh={() => { void carregarItens(localUsuario?.latitude, localUsuario?.longitude); void carregarPerdas(localUsuario?.latitude, localUsuario?.longitude) }}
             onClaim={(item) => {
-              if (!sessao) return requireSession('auth', 'Entre para reivindicar um item com seguranca.')
+              if (!sessao) return requireSession('auth', 'Entre para reivindicar um item com segurança.')
+              if (item.usuario_id === sessao.usuario_id) {
+                setMensagemSistema('Este item foi publicado por você, então não aparece como reivindicável.')
+                return false
+              }
               setItemSelecionado(item)
               setRespostaDesafio('')
               setClaimAtual(null)
@@ -685,6 +886,11 @@ export default function Home() {
               return true
             }}
             onFocusItem={selecionarItemNoMapa}
+            onFocusLoss={selecionarPerdaNoMapa}
+            onFoundLoss={(alerta) => void abrirChatDePerda(alerta)}
+            onReportItem={(item) => void denunciarPostPublico(item, 'item')}
+            onReportLoss={(alerta) => void denunciarPostPublico(alerta, 'perda')}
+            currentUserId={sessao?.usuario_id ?? null}
           />
         )}
       </section>
@@ -707,7 +913,7 @@ export default function Home() {
         />
       ) : null}
       {modalAtivo === 'item' && sessao ? <ModalItemAchado sessao={sessao} onClose={() => setModalAtivo(null)} onPublicado={(item) => { setItens((atuais) => [item, ...atuais]); setItemSelecionado(item); setModalAtivo(null); void carregarPainel(sessao) }} /> : null}
-      {modalAtivo === 'perdi' && sessao ? <ModalPerdiAlgo sessao={sessao} pontoInicial={localUsuario ?? defaultPoint} onClose={() => setModalAtivo(null)} onCriado={(mensagem) => { setMensagemSistema(mensagem); setModalAtivo(null); void carregarPainel(sessao) }} /> : null}
+      {modalAtivo === 'perdi' && sessao ? <ModalPerdiAlgo sessao={sessao} pontoInicial={localUsuario ?? defaultPoint} onClose={() => setModalAtivo(null)} onCriado={(mensagem) => { setMensagemSistema(mensagem); setModalAtivo(null); void carregarPainel(sessao); void carregarPerdas(localUsuario?.latitude, localUsuario?.longitude) }} /> : null}
       {modalAtivo === 'desafio' && itemSelecionado ? <ModalDesafio item={itemSelecionado} resposta={respostaDesafio} onRespostaChange={setRespostaDesafio} onConfirmar={() => void confirmarRespostaDesafio()} onClose={() => setModalAtivo(null)} /> : null}
       {modalAtivo === 'resposta-enviada' ? <ModalRespostaEnviada onClose={() => setModalAtivo(null)} /> : null}
       {modalAtivo === 'aguardando' ? <ModalAguardandoValidacao reivindicacaoId={reivindicacaoId} claim={claimAtual} onClose={() => setModalAtivo(null)} onValidar={(aprovada) => void validarRespostaComoEncontrador(aprovada)} /> : null}
@@ -722,12 +928,12 @@ export default function Home() {
           valorAtual={mensagemChatAtual}
           onChangeValor={setMensagemChatAtual}
           onEnviar={() => void enviarMensagemNoChat()}
-          onDenunciar={(motivo, prova, arquivo, mensagemId) => salaChatId && sessao ? void denunciarExtorsao(salaChatId, sessao.usuario_id, motivo, mensagemId, prova, arquivo).then((res) => { setMensagemSistema(res.mensagem); setChatFeedback(res.mensagem) }) : undefined}
+          onDenunciar={(motivo, prova, arquivo, mensagemId) => salaChatId && sessao ? void denunciarExtorsao(salaChatId, sessao.usuario_id, motivo, mensagemId, prova, arquivo).then((res) => { setMensagemSistema(res.mensagem); setChatFeedback(res.mensagem); setChatAtual((atual) => (atual ? { ...atual, status: 'encerrado' } : atual)); setModalAtivo(null); void carregarPainel(sessao) }) : undefined}
           denunciarDisponivel={denunciaDisponivel}
           podeAvaliar={Boolean(sessao && chatAtual?.dono_usuario_id === sessao.usuario_id && chatAtual.encontrador_usuario_id)}
           onConfirmarDevolucao={(nota) => {
             const chatSelecionado = chatAtual
-            if (!sessao || !chatSelecionado?.encontrador_usuario_id) return
+            if (!sessao || !chatSelecionado?.encontrador_usuario_id || !chatSelecionado.item_achado_id) return
             return confirmarDevolucaoComAvaliacao({
               item_achado_id: chatSelecionado.item_achado_id,
               encontrador_usuario_id: chatSelecionado.encontrador_usuario_id,
@@ -743,7 +949,7 @@ export default function Home() {
           onClose={() => setModalAtivo(null)}
         />
       ) : null}
-      {modalAtivo === 'busca' ? <ModalBusca filtro={filtro} buscaTexto={buscaTexto} itensVisiveis={itensFiltrados.length} totalItens={itens.length} onFiltroChange={setFiltro} onBuscaChange={setBuscaTexto} onLimpar={() => { setFiltro('todos'); setBuscaTexto('') }} onClose={() => setModalAtivo(null)} /> : null}
+      {modalAtivo === 'busca' ? <ModalBusca filtro={filtro} buscaTexto={buscaTexto} itensVisiveis={itensFiltrados.length + perdasFiltradas.length} totalItens={itens.length + perdasProximas.length} onFiltroChange={setFiltro} onBuscaChange={setBuscaTexto} onLimpar={() => { setFiltro('todos'); setBuscaTexto('') }} onClose={() => setModalAtivo(null)} /> : null}
       {modalAtivo === 'seguranca' ? <ModalManifestoSeguranca onClose={() => setModalAtivo(null)} /> : null}
       {modalAtivo === 'termos' ? <ModalTermosLgpd onClose={() => setModalAtivo(null)} /> : null}
       {modalAtivo === 'perfil' && sessao ? <ModalPerfil sessao={sessao} painel={painel} onClose={() => setModalAtivo(null)} onLogout={sair} onUpdated={salvarSessao} onOpenAdmin={isAdmin(sessao) ? async () => { const data = await buscarPainelAdmin(sessao.usuario_id); setAdminData(data); setModalAtivo('admin') } : undefined} /> : null}
@@ -758,7 +964,10 @@ export default function Home() {
 function RadarSection({
   viewMode,
   itens,
+  perdas,
+  feedMode,
   totalItens,
+  totalPerdas,
   itemSelecionado,
   localUsuario,
   mapRef,
@@ -771,22 +980,41 @@ function RadarSection({
   onRefresh,
   onClaim,
   onFocusItem,
+  onFocusLoss,
+  onFoundLoss,
+  onReportItem,
+  onReportLoss,
+  onViewItem,
+  onFeedModeChange,
+  feedItemRefs,
+  currentUserId,
 }: {
   viewMode: 'feed' | 'mapa'
   itens: ItemAchado[]
+  perdas: LostAlert[]
+  feedMode: FeedMode
   totalItens: number
+  totalPerdas: number
   itemSelecionado: ItemAchado | null
   localUsuario: GeoPoint | null
-  mapRef: React.RefObject<HTMLDivElement | null>
+  mapRef: RefObject<HTMLDivElement | null>
+  feedItemRefs: MutableRefObject<Record<string, HTMLElement | null>>
   mensagemSistema: string
   carregando: boolean
   getDistance: (item: ItemAchado) => number | null
   onSelectItem: (item: ItemAchado) => void
+  onViewItem: (item: ItemAchado) => void
+  onFeedModeChange: (mode: FeedMode) => void
   onSearch: () => void
   onNearby: () => void
   onRefresh: () => void
   onClaim: (item: ItemAchado) => void
   onFocusItem: (item: ItemAchado) => void
+  onFocusLoss: (alerta: LostAlert) => void
+  onFoundLoss: (alerta: LostAlert) => void
+  onReportItem: (item: ItemAchado) => void
+  onReportLoss: (alerta: LostAlert) => void
+  currentUserId: string | null
 }) {
   return (
     <>
@@ -809,7 +1037,7 @@ function RadarSection({
           </div>
         </div>
 
-        {viewMode === 'mapa' ? <MapaInterativo itens={itens} itemSelecionado={itemSelecionado} onSelecionarItem={onSelectItem} userLocation={localUsuario} /> : null}
+        {viewMode === 'mapa' ? <MapaInterativo itens={itens} itemSelecionado={itemSelecionado} onSelecionarItem={onSelectItem} onVerItem={onViewItem} userLocation={localUsuario} /> : null}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-foundy-border bg-foundy-background/70 p-4">
           <p className="text-sm text-foundy-muted" aria-live="polite">{mensagemSistema}</p>
           <button className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-semibold" type="button" onClick={onRefresh}>
@@ -818,23 +1046,69 @@ function RadarSection({
         </div>
       </div>
 
-      {viewMode === 'feed' ? <section className="grid gap-4" aria-label="Feed de itens achados">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-black tracking-tight">Itens achados perto de você</h2>
-          <span className="text-sm text-foundy-muted">{itens.length} de {totalItens}</span>
+      {viewMode === 'feed' ? <section className="grid gap-4" aria-label="Feed principal Foundy">
+        <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-black tracking-tight">{feedMode === 'achados' ? 'Itens achados perto de você' : 'Pessoas procurando itens perto de você'}</h2>
+            <p className="text-sm text-foundy-muted">Feeds separados para reduzir confusão e acelerar a recuperação.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 rounded-2xl bg-foundy-background p-1">
+            <button className={`rounded-xl px-4 py-2 text-sm font-black ${feedMode === 'achados' ? 'bg-foundy-green text-slate-950' : 'text-foundy-muted'}`} type="button" onClick={() => onFeedModeChange('achados')}>Achados ({itens.length}/{totalItens})</button>
+            <button className={`rounded-xl px-4 py-2 text-sm font-black ${feedMode === 'perdidos' ? 'bg-red-500 text-white' : 'text-foundy-muted'}`} type="button" onClick={() => onFeedModeChange('perdidos')}>Perdas ({perdas.length}/{totalPerdas})</button>
+          </div>
         </div>
-        {itens.map((item) => <ItemCard item={item} key={item.id} distance={getDistance(item)} onClaim={onClaim} onFocus={onFocusItem} />)}
-        {!carregando && itens.length === 0 ? <EmptyState title="Nenhum item encontrado" text="Abra a lupa para ajustar os filtros ou crie um alerta de perda." /> : null}
+        {feedMode === 'achados' ? itens.map((item) => (
+          <ItemCard
+            item={item}
+            key={item.id}
+            distance={getDistance(item)}
+            onClaim={onClaim}
+            onFocus={onFocusItem}
+            onReport={onReportItem}
+            currentUserId={currentUserId}
+            refCallback={(node) => { feedItemRefs.current[item.id] = node }}
+          />
+        )) : null}
+        {feedMode === 'perdidos' ? perdas.map((alerta) => (
+          <LostAlertCard
+            alerta={alerta}
+            key={alerta.id}
+            onFocus={onFocusLoss}
+            onFound={onFoundLoss}
+            onReport={onReportLoss}
+            currentUserId={currentUserId}
+            refCallback={(node) => { feedItemRefs.current[`perda-${alerta.id}`] = node }}
+          />
+        )) : null}
+        {!carregando && feedMode === 'achados' && itens.length === 0 ? <EmptyState title="Nenhum item encontrado" text="Abra a lupa para ajustar os filtros ou crie um alerta de perda." /> : null}
+        {!carregando && feedMode === 'perdidos' && perdas.length === 0 ? <EmptyState title="Nenhum alerta de perda" text="Quando alguém perder algo por perto, aparecerá aqui." /> : null}
         {carregando ? <p className="text-sm text-foundy-muted">Atualizando feed...</p> : null}
       </section> : null}
     </>
   )
 }
 
-function ItemCard({ item, distance, onClaim, onFocus }: { item: ItemAchado; distance: number | null; onClaim: (item: ItemAchado) => void; onFocus: (item: ItemAchado) => void }) {
+function ItemCard({
+  item,
+  distance,
+  onClaim,
+  onFocus,
+  onReport,
+  currentUserId,
+  refCallback,
+}: {
+  item: ItemAchado
+  distance: number | null
+  onClaim: (item: ItemAchado) => void
+  onFocus: (item: ItemAchado) => void
+  onReport: (item: ItemAchado) => void
+  currentUserId: string | null
+  refCallback: (node: HTMLElement | null) => void
+}) {
   const CategoriaIcon = categorias[item.categoria].Icon
+  const isOwner = Boolean(currentUserId && item.usuario_id === currentUserId)
   return (
-    <article className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface">
+    <article ref={refCallback} className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface">
       <div className="relative h-52 overflow-hidden">
         <img src={item.imagem_url ?? placeholdersPorCategoria[item.categoria]} alt={`Imagem do item ${item.titulo}`} className="h-full w-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
@@ -856,8 +1130,57 @@ function ItemCard({ item, distance, onClaim, onFocus }: { item: ItemAchado; dist
           {(item.hashtags_ia ?? []).map((tag) => <span className="rounded-full bg-foundy-blue/15 px-3 py-1 text-xs font-semibold text-foundy-blue" key={`${item.id}-${tag}`}>{tag}</span>)}
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950" type="button" onClick={() => onClaim(item)}>E meu</button>
+          {!isOwner ? <button className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950" type="button" onClick={() => onClaim(item)}>É meu</button> : <span className="rounded-xl border border-foundy-border px-4 py-2 text-sm font-bold text-foundy-muted">Publicado por você</span>}
           <button className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold" type="button" onClick={() => onFocus(item)}>Ver no mapa</button>
+          {!isOwner ? <button className="foundy-pressable rounded-xl border border-red-400/50 px-4 py-2 text-sm font-semibold text-red-200" type="button" onClick={() => onReport(item)}>Denunciar post</button> : null}
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function LostAlertCard({
+  alerta,
+  onFocus,
+  onFound,
+  onReport,
+  currentUserId,
+  refCallback,
+}: {
+  alerta: LostAlert
+  onFocus: (alerta: LostAlert) => void
+  onFound: (alerta: LostAlert) => void
+  onReport: (alerta: LostAlert) => void
+  currentUserId: string | null
+  refCallback: (node: HTMLElement | null) => void
+}) {
+  const categoria = alerta.categoria ?? 'outros'
+  const CategoriaIcon = categorias[categoria].Icon
+  const isOwner = Boolean(currentUserId && alerta.usuario_id === currentUserId)
+  return (
+    <article ref={refCallback} className="foundy-item-card overflow-hidden rounded-3xl border border-red-400/20 bg-foundy-surface">
+      <div className="relative h-48 overflow-hidden">
+        <img src={alerta.imagem_url ?? placeholdersPorCategoria[categoria]} alt={`Imagem do alerta ${alerta.titulo}`} className="h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-t from-red-950/80 via-black/20 to-transparent" />
+        <div className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full bg-red-500 px-3 py-1 text-xs font-black text-white">
+          Procurando
+        </div>
+        <div className="absolute bottom-3 right-3 rounded-full bg-foundy-blue px-3 py-1 text-xs font-bold text-white">{formatDistance(alerta.distancia_metros ?? null)}</div>
+      </div>
+      <div className="grid gap-3 p-4 sm:p-5">
+        <div>
+          <p className="inline-flex items-center gap-2 rounded-full bg-foundy-blue/15 px-3 py-1 text-xs font-bold text-foundy-blue"><CategoriaIcon size={14} /> {categorias[categoria].label}</p>
+          <h3 className="mt-3 text-lg font-black">{alerta.titulo}</h3>
+          <p className="text-sm text-foundy-muted">{alerta.local_descricao ?? 'Região aproximada protegida'}</p>
+        </div>
+        <p className="text-sm leading-6 text-foundy-muted">{alerta.descricao}</p>
+        <div className="flex flex-wrap gap-2">
+          {alerta.subcategoria ? <span className="rounded-full bg-red-500/15 px-3 py-1 text-xs font-semibold text-red-200">{filtrosFoundy[alerta.subcategoria as ItemFilter]?.label ?? alerta.subcategoria}</span> : null}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {!isOwner ? <button className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950" type="button" onClick={() => onFound(alerta)}>Encontrei</button> : <span className="rounded-xl border border-foundy-border px-4 py-2 text-sm font-bold text-foundy-muted">Seu alerta</span>}
+          <button className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-semibold" type="button" onClick={() => onFocus(alerta)}>Ver no mapa</button>
+          {!isOwner ? <button className="foundy-pressable rounded-xl border border-red-400/50 px-4 py-2 text-sm font-semibold text-red-200" type="button" onClick={() => onReport(alerta)}>Denunciar post</button> : null}
         </div>
       </div>
     </article>
@@ -932,8 +1255,8 @@ function SecuritySection() {
     <section className="grid gap-4">
       <div className="foundy-hero-panel rounded-3xl border border-foundy-border bg-foundy-surface p-5">
         <p className="foundy-eyebrow foundy-attention text-sm font-semibold text-foundy-green">Protocolo Foundy</p>
-        <h1 className="mt-2 text-3xl font-black">Seguranca fisica antes de qualquer encontro.</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-foundy-muted">O Foundy e uma ponte digital. Encontros devem acontecer em locais publicos, de dia, com prova de posse e preferencialmente acompanhado.</p>
+        <h1 className="mt-2 text-3xl font-black">Segurança física antes de qualquer encontro.</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-foundy-muted">O Foundy é uma ponte digital. Encontros devem acontecer em locais públicos, de dia, com prova de posse e preferencialmente acompanhado.</p>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <TrustCard title="Local público" text="Nunca combine retirada em residência, local isolado ou estacionamento vazio." />
@@ -1041,6 +1364,12 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
   const [local, setLocal] = useState('')
   const [imagemUrl, setImagemUrl] = useState('')
   const [mensagem, setMensagem] = useState('Cadastre itens encontrados para organizar o balcão de achados e perdidos.')
+  const [formAberto, setFormAberto] = useState(false)
+  const [buscaCatalogo, setBuscaCatalogo] = useState('')
+  const [statusCatalogo, setStatusCatalogo] = useState<'todos' | 'disponivel' | 'retirado' | 'arquivado'>('disponivel')
+  const [retiradaItemId, setRetiradaItemId] = useState<string | null>(null)
+  const [retiradoPor, setRetiradoPor] = useState('')
+  const [retiradoEm, setRetiradoEm] = useState(() => new Date().toISOString().slice(0, 16))
 
   const carregar = useCallback(async () => {
     const lista = await listarCatalogoEmpresa(sessao.usuario_id, '')
@@ -1099,6 +1428,26 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
     }
   }
 
+  async function confirmarRetirada() {
+    if (!retiradaItemId || retiradoPor.trim().length < 2) return setMensagem('Informe quem retirou o item.')
+    try {
+      const resposta = await marcarItemCatalogoRetirado(retiradaItemId, sessao.usuario_id, retiradoPor.trim(), new Date(retiradoEm).toISOString())
+      setMensagem(resposta.mensagem)
+      setRetiradaItemId(null)
+      setRetiradoPor('')
+      await carregar()
+    } catch (error) {
+      setMensagem(error instanceof Error ? error.message : 'Não foi possível registrar a retirada.')
+    }
+  }
+
+  const itensVisiveis = itens.filter((item) => {
+    const statusOk = statusCatalogo === 'todos' || item.status === statusCatalogo
+    const termo = buscaCatalogo.trim().toLowerCase()
+    const texto = `${item.titulo} ${item.descricao} ${item.codigo_interno ?? ''} ${item.local_armazenamento ?? ''}`.toLowerCase()
+    return statusOk && (!termo || texto.includes(termo))
+  })
+
   return (
     <section className="grid gap-4">
       <div className="foundy-hero-panel rounded-3xl border border-foundy-border bg-foundy-surface p-5">
@@ -1106,44 +1455,82 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
         <h1 className="mt-2 text-3xl font-black">{sessao.empresa_nome || sessao.nome}</h1>
         <p className="mt-2 text-sm leading-6 text-foundy-muted">Catálogo interno para achados e perdidos. Sem chat, sem desafio oculto e sem geolocalização.</p>
       </div>
-      <div className="grid gap-4 rounded-3xl border border-foundy-border bg-foundy-surface p-4">
-        <h2 className="text-xl font-black">Adicionar item ao catálogo</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Título"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} /></Field>
-          <Field label="Categoria"><select className="foundy-input" value={categoria} onChange={(event) => setCategoria(event.target.value as ItemCategory)}>{Object.entries(categorias).map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
+      <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-xl font-black">Meu catálogo</h2>
+          <p className="text-sm text-foundy-muted">Use busca, filtros e abas para checar itens disponíveis, retirados ou arquivados.</p>
         </div>
-        <Field label="Descrição"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} /></Field>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Código interno"><input className="foundy-input" value={codigo} onChange={(event) => setCodigo(event.target.value)} placeholder="Ex.: BALCÃO-042" /></Field>
-          <Field label="Local de armazenamento"><input className="foundy-input" value={local} onChange={(event) => setLocal(event.target.value)} placeholder="Ex.: gaveta 2, secretaria" /></Field>
-        </div>
-        <button className="h-11 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={() => fileRef.current?.click()}>{categoria === 'documentos' ? 'Documento: foto bloqueada' : 'Adicionar foto opcional'}</button>
-        <input className="sr-only" ref={fileRef} type="file" accept="image/*" onChange={selecionarImagem} />
-        {imagemUrl ? <img src={imagemUrl} alt="Prévia do catálogo" className="h-40 rounded-2xl object-cover" /> : null}
-        <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
-        <button className="h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={() => void criar()}>Publicar no catálogo</button>
+        <button className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950" type="button" onClick={() => setFormAberto((open) => !open)}>{formAberto ? 'Fechar cadastro' : 'Adicionar item'}</button>
       </div>
-      <PanelList title="Itens do catálogo" empty="Nenhum item empresarial cadastrado.">
-        {itens.map((item) => (
-          <div className="grid gap-2 rounded-2xl border border-foundy-border bg-foundy-background p-3" key={item.id}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-black">{item.titulo}</p>
-                <p className="text-xs text-foundy-muted">{categorias[item.categoria].label} - {item.status}</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => void mudarStatus(item.id, 'retirado')}>Retirado</button>
-                <button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-bold text-red-200" type="button" onClick={() => void mudarStatus(item.id, 'arquivado')}>Arquivar</button>
-              </div>
+      {formAberto ? (
+        <div className="grid gap-4 rounded-3xl border border-foundy-border bg-foundy-surface p-4">
+          <h2 className="text-xl font-black">Adicionar item ao catálogo</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Título"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} /></Field>
+            <Field label="Categoria"><select className="foundy-input" value={categoria} onChange={(event) => setCategoria(event.target.value as ItemCategory)}>{Object.entries(categorias).map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
+          </div>
+          <Field label="Descrição"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} /></Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Código interno"><input className="foundy-input" value={codigo} onChange={(event) => setCodigo(event.target.value)} placeholder="Ex.: BALCAO-042" /></Field>
+            <Field label="Local de armazenamento"><input className="foundy-input" value={local} onChange={(event) => setLocal(event.target.value)} placeholder="Ex.: gaveta 2, secretaria" /></Field>
+          </div>
+          <button className="h-11 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={() => fileRef.current?.click()}>{categoria === 'documentos' ? 'Documento: foto bloqueada' : 'Adicionar foto opcional'}</button>
+          <input className="sr-only" ref={fileRef} type="file" accept="image/*" onChange={selecionarImagem} />
+          {imagemUrl ? <img src={imagemUrl} alt="Prévia do catálogo" className="h-40 rounded-2xl object-cover" /> : null}
+          <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
+          <button className="h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={() => void criar()}>Publicar no catálogo</button>
+        </div>
+      ) : null}
+      <div className="grid gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4 md:grid-cols-[1fr_auto]">
+        <div className="foundy-search-input flex items-center gap-3 rounded-2xl border border-foundy-border bg-foundy-background px-4 py-3">
+          <Search size={18} />
+          <input className="w-full bg-transparent outline-none" value={buscaCatalogo} onChange={(event) => setBuscaCatalogo(event.target.value)} placeholder="Buscar por código, título, descrição ou armário..." />
+        </div>
+        <select className="foundy-input md:w-56" value={statusCatalogo} onChange={(event) => setStatusCatalogo(event.target.value as typeof statusCatalogo)}>
+          <option value="disponivel">Disponíveis</option>
+          <option value="retirado">Retirados</option>
+          <option value="arquivado">Arquivados</option>
+          <option value="todos">Todos</option>
+        </select>
+      </div>
+      <PanelList title="Itens do catálogo" empty="Nenhum item encontrado com estes filtros.">
+        {itensVisiveis.map((item) => (
+          <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[120px_1fr_auto]" key={item.id}>
+            <img src={item.imagem_url ?? placeholdersPorCategoria[item.categoria]} alt={`Imagem de ${item.titulo}`} className="h-28 w-full rounded-2xl object-cover md:w-28" />
+            <div>
+              <p className="text-sm font-black">{item.titulo}</p>
+              <p className="mt-1 text-xs text-foundy-muted">{categorias[item.categoria].label} - {item.status}</p>
+              <p className="mt-2 text-sm leading-6 text-foundy-muted">{item.descricao}</p>
+              <p className="mt-2 text-xs text-foundy-muted">Código: {item.codigo_interno || 'sem código'} | Local: {item.local_armazenamento || 'não informado'}</p>
+              {item.status === 'retirado' ? <p className="mt-2 rounded-xl border border-foundy-green/30 bg-foundy-green/10 p-2 text-xs text-foundy-green">Retirado por {item.retirado_por_nome ?? 'não informado'} em {item.retirado_em ? new Date(item.retirado_em).toLocaleString('pt-BR') : 'data não informada'}.</p> : null}
+            </div>
+            <div className="flex flex-wrap content-start gap-2">
+              {item.status !== 'retirado' ? <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => { setRetiradaItemId(item.id); setRetiradoPor(''); setRetiradoEm(new Date().toISOString().slice(0, 16)) }}>Retirado</button> : null}
+              <button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-bold text-red-200" type="button" onClick={() => void mudarStatus(item.id, 'arquivado')}>Arquivar</button>
             </div>
           </div>
         ))}
       </PanelList>
+      {retiradaItemId ? (
+        <div className="fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center">
+          <div className="w-full max-w-lg rounded-3xl border border-foundy-border bg-foundy-surface p-4 shadow-2xl">
+            <h3 className="text-lg font-black">Registrar retirada</h3>
+            <div className="mt-4 grid gap-3">
+              <Field label="Nome de quem retirou"><input className="foundy-input" value={retiradoPor} onChange={(event) => setRetiradoPor(event.target.value)} /></Field>
+              <Field label="Data e horário"><input className="foundy-input" type="datetime-local" value={retiradoEm} onChange={(event) => setRetiradoEm(event.target.value)} /></Field>
+              <div className="flex gap-2">
+                <button className="h-11 flex-1 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={() => void confirmarRetirada()}>Confirmar retirada</button>
+                <button className="h-11 flex-1 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={() => setRetiradaItemId(null)}>Cancelar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
 
-function AdminSection({ data, adminId, onRefresh }: { data: { usuarios: unknown[]; itens: ItemAchado[]; moderacao: unknown[]; denuncias?: unknown[] }; adminId: string; onRefresh: () => void }) {
+function AdminSection({ data, adminId, onRefresh }: { data: AdminData; adminId: string; onRefresh: () => void }) {
   return (
     <section className="grid gap-4">
       <div className="foundy-hero-panel rounded-3xl border border-red-400/30 bg-foundy-surface p-5">
@@ -1207,11 +1594,12 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
   const [empresaEndereco, setEmpresaEndereco] = useState('')
   const [empresaCidade, setEmpresaCidade] = useState('')
   const [empresaUf, setEmpresaUf] = useState('')
+  const [empresaCatalogoPublico, setEmpresaCatalogoPublico] = useState(true)
   const [mensagem, setMensagem] = useState('Crie sua conta para publicar, conversar e receber alertas.')
   const [enviando, setEnviando] = useState(false)
 
   async function enviar() {
-    if (!email.includes('@')) return setMensagem('Informe um e-mail valido.')
+    if (!email.includes('@')) return setMensagem('Informe um e-mail válido.')
     if (senha.length < 8) return setMensagem('A senha precisa ter pelo menos 8 caracteres.')
     if (modo === 'cadastrar' && nome.trim().length < 2) return setMensagem('Informe seu nome.')
     if (modo === 'cadastrar' && tipoConta === 'empresa' && (!empresaNome.trim() || !empresaEndereco.trim() || !empresaCidade.trim() || empresaUf.trim().length !== 2)) return setMensagem('Informe os dados públicos da instituição para criar a conta empresarial.')
@@ -1235,6 +1623,7 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
                 empresa_endereco_publico: empresaEndereco,
                 empresa_cidade: empresaCidade,
                 empresa_uf: empresaUf,
+                empresa_catalogo_publico: empresaCatalogoPublico,
               }
             : {}),
         })
@@ -1244,7 +1633,7 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
       const login = await entrarUsuario({ email: email.trim().toLowerCase(), senha })
       onSessaoAtiva(login)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'Nao foi possivel concluir a autenticacao.')
+      setMensagem(error instanceof Error ? error.message : 'Não foi possível concluir a autenticação.')
     } finally {
       setEnviando(false)
     }
@@ -1274,10 +1663,11 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
               <Field label="Cidade"><input className="foundy-input" value={empresaCidade} onChange={(event) => setEmpresaCidade(event.target.value)} /></Field>
               <Field label="UF"><input className="foundy-input uppercase" value={empresaUf} onChange={(event) => setEmpresaUf(event.target.value.toUpperCase().slice(0, 2))} maxLength={2} /></Field>
             </div>
+            <label className="flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><input checked={empresaCatalogoPublico} onChange={(event) => setEmpresaCatalogoPublico(event.target.checked)} type="checkbox" /> Catálogo visível para qualquer usuário encontrar pela aba Empresas.</label>
           </div>
         ) : null}
-        <Field label="E-mail"><input className="foundy-input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@email.com" type="email" autoComplete="email" /></Field>
-        <Field label="Senha"><input className="foundy-input" value={senha} onChange={(event) => setSenha(event.target.value)} placeholder="Minimo de 8 caracteres" type="password" autoComplete={modo === 'entrar' ? 'current-password' : 'new-password'} /></Field>
+        <Field label="E-mail"><input className="foundy-input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="você@email.com" type="email" autoComplete="email" /></Field>
+        <Field label="Senha"><input className="foundy-input" value={senha} onChange={(event) => setSenha(event.target.value)} placeholder="Mínimo de 8 caracteres" type="password" autoComplete={modo === 'entrar' ? 'current-password' : 'new-password'} /></Field>
         {modo === 'cadastrar' ? (
           <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm">
             <div className="rounded-2xl border border-foundy-blue/30 bg-foundy-blue/10 p-3">
@@ -1302,13 +1692,14 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
   const [titulo, setTitulo] = useState('')
   const [descricao, setDescricao] = useState('')
   const [categoria, setCategoria] = useState<ItemCategory>('outros')
+  const [subcategoriaItem, setSubcategoriaItem] = useState<ItemFilter>('outros')
   const [local, setLocal] = useState('')
   const [desafio, setDesafio] = useState('')
   const [detalheOculto, setDetalheOculto] = useState('')
   const [imagemUrl, setImagemUrl] = useState('')
   const [coords, setCoords] = useState<GeoPoint>(defaultPoint)
   const [tagsImagem, setTagsImagem] = useState<string[]>([])
-  const [mensagem, setMensagem] = useState('A imagem sera processada com filtro automatico de privacidade.')
+  const [mensagem, setMensagem] = useState('A imagem será processada com filtro automático de privacidade.')
   const [processando, setProcessando] = useState(false)
 
   async function processarImagemSelecionada(event: ChangeEvent<HTMLInputElement>) {
@@ -1317,7 +1708,7 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
     if (categoria === 'documentos') {
       setImagemUrl('')
       setTagsImagem(['#DocumentoProtegido'])
-      setMensagem('Documento selecionado: por seguranca, a foto nao sera publicada. Descreva apenas dados nao sensiveis.')
+      setMensagem('Documento selecionado: por segurança, a foto não será publicada. Descreva apenas dados não sensíveis.')
       return
     }
     setProcessando(true)
@@ -1334,21 +1725,22 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
   }
 
   function usarGeolocalizacao() {
-    if (!navigator.geolocation) return setMensagem('Geolocalizacao indisponivel neste navegador.')
+    if (!navigator.geolocation) return setMensagem('Geolocalização indisponível neste navegador.')
     navigator.geolocation.getCurrentPosition(
       (posicao) => { setCoords({ latitude: posicao.coords.latitude, longitude: posicao.coords.longitude }); setMensagem('Local aproximado capturado.') },
-      () => setMensagem('Nao foi possivel capturar sua localizacao.'),
+      () => setMensagem('Não foi possível capturar sua localização.'),
       { enableHighAccuracy: false, timeout: 8000 },
     )
   }
 
   async function publicar() {
-    if (!titulo.trim() || !descricao.trim() || !desafio.trim() || !detalheOculto.trim()) return setMensagem('Preencha titulo, descricao, desafio e detalhe oculto.')
+    if (!titulo.trim() || !descricao.trim() || !desafio.trim() || !detalheOculto.trim()) return setMensagem('Preencha título, descrição, desafio e detalhe oculto.')
     try {
       const item = await cadastrarItemAchado({
         titulo,
         descricao,
         categoria,
+        subcategoria: subcategoriaItem,
         latitude: coords.latitude,
         longitude: coords.longitude,
         local_descricao: local,
@@ -1360,29 +1752,30 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
       })
       onPublicado(item)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'Nao foi possivel publicar o item.')
+      setMensagem(error instanceof Error ? error.message : 'Não foi possível publicar o item.')
     }
   }
 
   return (
-    <ModalBase titulo="Cadastrar item achado" subtitulo="Fotos de documentos nunca sao publicadas." onClose={onClose}>
+    <ModalBase titulo="Cadastrar item achado" subtitulo="Fotos de documentos nunca são publicadas." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Titulo"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} placeholder="Ex.: Chave com fita azul" /></Field>
+          <Field label="Título"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} placeholder="Ex.: Chave com fita azul" /></Field>
           <Field label="Categoria"><select className="foundy-input" value={categoria} onChange={(event) => { const value = event.target.value as ItemCategory; setCategoria(value); if (value === 'documentos') setImagemUrl('') }}>{Object.entries(categorias).map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
+          <Field label="Filtro específico"><select className="foundy-input" value={subcategoriaItem} onChange={(event) => setSubcategoriaItem(event.target.value as ItemFilter)}>{Object.entries(filtrosFoundy).filter(([value]) => value !== 'todos').map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
         </div>
-        <Field label="Descricao publica"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} placeholder="Nao informe telefone, e-mail, CPF ou endereco exato." /></Field>
+        <Field label="Descrição pública"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} placeholder="Não informe telefone, e-mail, CPF ou endereço exato." /></Field>
         <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-foundy-border text-sm font-bold disabled:opacity-60" type="button" onClick={() => fileInputRef.current?.click()} disabled={processando}>
           <Camera size={17} /> {categoria === 'documentos' ? 'Documento: foto bloqueada' : processando ? 'Processando...' : 'Upload com privacidade'}
         </button>
         <input accept="image/*" className="sr-only" ref={fileInputRef} type="file" onChange={(event) => void processarImagemSelecionada(event)} />
-        {imagemUrl ? <img src={imagemUrl} alt="Previa protegida do item" className="h-44 w-full rounded-2xl object-cover" /> : null}
-        <Field label="Local aproximado"><input className="foundy-input" value={local} onChange={(event) => setLocal(event.target.value)} placeholder="Ex.: perto da praca" /></Field>
+        {imagemUrl ? <img src={imagemUrl} alt="Prévia protegida do item" className="h-44 w-full rounded-2xl object-cover" /> : null}
+        <Field label="Local aproximado"><input className="foundy-input" value={local} onChange={(event) => setLocal(event.target.value)} placeholder="Ex.: perto da praça" /></Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Desafio do dono"><input className="foundy-input" value={desafio} onChange={(event) => setDesafio(event.target.value)} placeholder="Ex.: Qual detalhe interno?" /></Field>
-          <Field label="Detalhe oculto"><input className="foundy-input" value={detalheOculto} onChange={(event) => setDetalheOculto(event.target.value)} placeholder="Resposta que so o dono sabe" /></Field>
+          <Field label="Detalhe oculto"><input className="foundy-input" value={detalheOculto} onChange={(event) => setDetalheOculto(event.target.value)} placeholder="Resposta que só o dono sabe" /></Field>
         </div>
-        <button className="h-10 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={usarGeolocalizacao}>Usar minha localizacao</button>
+        <button className="h-10 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={usarGeolocalizacao}>Usar minha localização</button>
         <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
         <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => void publicar()}>Publicar com detalhe oculto</button>
       </div>
@@ -1393,27 +1786,44 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
 function ModalPerdiAlgo({ sessao, pontoInicial, onClose, onCriado }: { sessao: FoundySession; pontoInicial: GeoPoint; onClose: () => void; onCriado: (mensagem: string) => void }) {
   const [titulo, setTitulo] = useState('')
   const [descricao, setDescricao] = useState('')
-  const [hashtags, setHashtags] = useState('#chave #fitaazul')
+  const [categoria, setCategoria] = useState<ItemCategory>('outros')
+  const [subcategoria, setSubcategoria] = useState<ItemFilter>('outros')
+  const [localDescricao, setLocalDescricao] = useState('')
   const [ponto, setPonto] = useState<GeoPoint>(pontoInicial)
   const [raio, setRaio] = useState(5000)
-  const [mensagem, setMensagem] = useState('Toque no mapa para posicionar o centro do perimetro.')
+  const [mensagem, setMensagem] = useState('Toque no mapa para posicionar o centro do perímetro.')
 
   async function criar() {
-    if (!titulo.trim() || !descricao.trim()) return setMensagem('Preencha titulo e descricao.')
+    if (!titulo.trim() || !descricao.trim()) return setMensagem('Preencha título e descrição.')
     try {
-      const resposta = await criarAlertaPerdido({ usuario_id: sessao.usuario_id, titulo, descricao, hashtags: hashtags.split(/[\s,]+/).map((tag) => tag.replace(/^#/, '')).filter(Boolean), latitude: ponto.latitude, longitude: ponto.longitude, raio_metros: raio })
+      const resposta = await criarAlertaPerdido({
+        usuario_id: sessao.usuario_id,
+        titulo,
+        descricao,
+        categoria,
+        subcategoria,
+        local_descricao: localDescricao,
+        hashtags: [subcategoria, categoria, titulo, descricao].join(' ').split(/[\s,]+/).map((tag) => tag.replace(/^#/, '')).filter(Boolean),
+        latitude: ponto.latitude,
+        longitude: ponto.longitude,
+        raio_metros: raio,
+      })
       onCriado(resposta.mensagem)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'Nao foi possivel criar o alerta perdido.')
+      setMensagem(error instanceof Error ? error.message : 'Não foi possível criar o alerta perdido.')
     }
   }
 
   return (
-    <ModalBase titulo="Perimetro ativo de perda" subtitulo="Receba notificacao se surgir item compativel." onClose={onClose}>
+    <ModalBase titulo="Perímetro ativo de perda" subtitulo="Receba notificação se surgir item compatível." onClose={onClose}>
       <div className="grid gap-4 p-4">
-        <Field label="Titulo"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} placeholder="Ex.: Perdi meu celular preto" /></Field>
-        <Field label="Descricao"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} /></Field>
-        <Field label="Hashtags"><input className="foundy-input" value={hashtags} onChange={(event) => setHashtags(event.target.value)} /></Field>
+        <Field label="Título"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} placeholder="Ex.: Perdi meu celular preto" /></Field>
+        <Field label="Descrição"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} /></Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Categoria principal"><select className="foundy-input" value={categoria} onChange={(event) => setCategoria(event.target.value as ItemCategory)}>{Object.entries(categorias).map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
+          <Field label="Filtro específico"><select className="foundy-input" value={subcategoria} onChange={(event) => setSubcategoria(event.target.value as ItemFilter)}>{Object.entries(filtrosFoundy).filter(([value]) => value !== 'todos').map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
+        </div>
+        <Field label="Ponto de referência público"><input className="foundy-input" value={localDescricao} onChange={(event) => setLocalDescricao(event.target.value)} placeholder="Ex.: perto da entrada principal do shopping" /></Field>
         <MapaPerimetro center={ponto} radius={raio} onCenterChange={setPonto} />
         <Field label={`Raio (${Math.round(raio / 1000)} km)`}><input type="range" min={500} max={50000} step={500} value={raio} onChange={(event) => setRaio(Number(event.target.value))} /></Field>
         <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
@@ -1429,7 +1839,7 @@ function ModalPerfil({ sessao, painel, onClose, onLogout, onUpdated, onOpenAdmin
   const [ocupacao, setOcupacao] = useState(sessao.ocupacao ?? '')
   const [fotoUrl, setFotoUrl] = useState(sessao.foto_url ?? '')
   const [emailNotifications, setEmailNotifications] = useState(sessao.aceita_notificacoes_email !== 'false')
-  const [mensagem, setMensagem] = useState('Atualize seu perfil publico para gerar mais confianca.')
+  const [mensagem, setMensagem] = useState('Atualize seu perfil público para gerar mais confiança.')
 
   function selecionarFoto(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -1445,12 +1855,12 @@ function ModalPerfil({ sessao, painel, onClose, onLogout, onUpdated, onOpenAdmin
       onUpdated(atualizado)
       setMensagem(atualizado.mensagem)
     } catch (error) {
-      setMensagem(error instanceof Error ? error.message : 'Nao foi possivel atualizar o perfil.')
+      setMensagem(error instanceof Error ? error.message : 'Não foi possível atualizar o perfil.')
     }
   }
 
   return (
-    <ModalBase titulo="Minha pagina Foundy" subtitulo="Perfil, karma, itens e preferencias." onClose={onClose}>
+    <ModalBase titulo="Minha página Foundy" subtitulo="Perfil, karma, itens e preferências." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <div className="flex items-center gap-4 rounded-2xl border border-foundy-border bg-foundy-background p-4">
           {fotoUrl ? <img src={fotoUrl} alt="" className="size-20 rounded-2xl object-cover" /> : <span className="grid size-20 place-items-center rounded-2xl bg-foundy-blue/20"><UserRound size={30} /></span>}
@@ -1462,8 +1872,8 @@ function ModalPerfil({ sessao, painel, onClose, onLogout, onUpdated, onOpenAdmin
           </div>
         </div>
         <Field label="Nome"><input className="foundy-input" value={nome} onChange={(event) => setNome(event.target.value)} /></Field>
-        <Field label="Ocupacao ou apresentacao curta"><input className="foundy-input" value={ocupacao} onChange={(event) => setOcupacao(event.target.value)} placeholder="Ex.: estudante, comerciante, morador do bairro" /></Field>
-        <label className="flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><input checked={emailNotifications} onChange={(event) => setEmailNotifications(event.target.checked)} type="checkbox" /> Receber notificacoes importantes por e-mail.</label>
+        <Field label="Ocupação ou apresentação curta"><input className="foundy-input" value={ocupacao} onChange={(event) => setOcupacao(event.target.value)} placeholder="Ex.: estudante, comerciante, morador do bairro" /></Field>
+        <label className="flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><input checked={emailNotifications} onChange={(event) => setEmailNotifications(event.target.checked)} type="checkbox" /> Receber notificações importantes por e-mail.</label>
         <div className="grid gap-2 sm:grid-cols-3">
           <Metric label="Itens" value={String(painel?.itens_postados.length ?? 0)} />
           <Metric label="Alertas" value={String(painel?.alertas_perdidos.length ?? 0)} />
@@ -1685,7 +2095,7 @@ function ModalOnboarding({ onClose }: { onClose: () => void }) {
           </article>
         ))}
         <div className="sm:col-span-2 rounded-2xl border border-red-400/30 bg-red-500/10 p-4 text-sm text-red-100">
-          Proibido para menores de 18 anos. Nunca va sozinho e nunca aceite encontros em locais isolados.
+          Proibido para menores de 18 anos. Nunca vá sozinho e nunca aceite encontros em locais isolados.
         </div>
         <button className="sm:col-span-2 h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={onClose}>Entendi o protocolo</button>
       </div>
@@ -1693,8 +2103,30 @@ function ModalOnboarding({ onClose }: { onClose: () => void }) {
   )
 }
 
-function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { data: { usuarios: unknown[]; itens: ItemAchado[]; moderacao: unknown[]; denuncias?: unknown[] }; adminId: string; onClose: () => void; onRefresh: () => void; embedded?: boolean }) {
+function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { data: AdminData; adminId: string; onClose: () => void; onRefresh: () => void; embedded?: boolean }) {
   const [mensagem, setMensagem] = useState('Painel restrito ao administrador configurado.')
+  const [tab, setTab] = useState<'itens' | 'usuarios' | 'empresas' | 'denuncias' | 'banidos'>('itens')
+  const [busca, setBusca] = useState('')
+  const [detalhe, setDetalhe] = useState<{ titulo: string; dados: Record<string, unknown> } | null>(null)
+
+  const usuarios = data.usuarios as Record<string, unknown>[]
+  const empresas = (data.empresas ?? []) as Record<string, unknown>[]
+  const itens = data.itens as unknown as Record<string, unknown>[]
+  const alertas = (data.alertas_perdidos ?? []) as Record<string, unknown>[]
+  const denunciasChat = (data.denuncias ?? []) as Record<string, unknown>[]
+  const denunciasPosts = (data.denuncias_posts ?? []) as Record<string, unknown>[]
+  const banidos = (data.banidos ?? []) as Record<string, unknown>[]
+  const termo = busca.trim().toLowerCase()
+
+  function texto(row: Record<string, unknown>) {
+    return Object.values(row).filter((value) => ['string', 'number', 'boolean'].includes(typeof value)).join(' ').toLowerCase()
+  }
+
+  function filtrar(rows: Record<string, unknown>[]) {
+    if (!termo) return rows
+    return rows.filter((row) => texto(row).includes(termo))
+  }
+
   async function arquivar(itemId: string) {
     const motivo = window.prompt('Motivo do arquivamento?') ?? ''
     if (motivo.length < 5) return
@@ -1702,22 +2134,87 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
     setMensagem(result.mensagem)
     onRefresh()
   }
-  async function banir(usuario: unknown) {
-    const user = usuario as { id: string }
-    const motivo = window.prompt('Motivo do banimento?') ?? ''
-    const dias = Number(window.prompt('Quantos dias?', '7') ?? '7')
-    if (motivo.length < 5 || !Number.isFinite(dias)) return
-    const result = await adminBanirUsuario(adminId, user.id, motivo, dias)
+
+  async function aplicarMedida(usuarioId: string, tipo: 'conta' | 'chat', denuncia?: Record<string, unknown>, denunciaTipo?: 'chat' | 'post') {
+    const motivo = window.prompt(tipo === 'chat' ? 'Motivo do bloqueio de chat/desafios?' : 'Motivo da suspensão da conta?') ?? ''
+    if (motivo.length < 5) return
+    const permanente = window.confirm('Aplicar por tempo indeterminado? Clique em Cancelar para definir dias.')
+    const dias = permanente ? null : Number(window.prompt('Quantos dias?', '7') ?? '7')
+    if (!permanente && (!Number.isFinite(dias) || Number(dias) < 1)) return
+    const result = await adminAplicarMedidaUsuario(adminId, usuarioId, {
+      motivo,
+      tipo,
+      permanente,
+      dias: permanente ? null : Number(dias),
+      denuncia_id: typeof denuncia?.id === 'string' ? denuncia.id : undefined,
+      denuncia_tipo: denunciaTipo,
+    })
     setMensagem(result.mensagem)
     onRefresh()
   }
+
+  async function avisar(usuarioId: string, denuncia?: Record<string, unknown>, denunciaTipo?: 'chat' | 'post') {
+    const motivo = window.prompt('Texto do aviso ao usuário?') ?? ''
+    if (motivo.length < 5) return
+    const result = await adminAvisarUsuario(adminId, usuarioId, motivo, typeof denuncia?.id === 'string' ? denuncia.id : undefined, denunciaTipo)
+    setMensagem(result.mensagem)
+    onRefresh()
+  }
+
+  async function desbanir(usuarioId: string) {
+    const motivo = window.prompt('Motivo do desbanimento?', 'Revisão administrativa concluída.') ?? ''
+    if (motivo.length < 5) return
+    const result = await adminDesbanirUsuario(adminId, usuarioId, motivo)
+    setMensagem(result.mensagem)
+    onRefresh()
+  }
+
+  const itemRows = filtrar([...itens, ...alertas])
+  const userRows = filtrar(usuarios)
+  const companyRows = filtrar(empresas)
+  const reportRows = filtrar([...denunciasChat.map((row) => ({ ...row, origem_denuncia: 'chat' })), ...denunciasPosts.map((row) => ({ ...row, origem_denuncia: 'post' }))])
+  const bannedRows = filtrar(banidos)
+
+  function DetailButton({ row, title }: { row: Record<string, unknown>; title: string }) {
+    return <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => setDetalhe({ titulo: title, dados: row })}>Ver detalhes</button>
+  }
+
   const content = (
-      <div className="grid gap-4 p-4">
-        <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
-        <PanelList title="Itens recentes" empty="Nenhum item.">{data.itens.map((item) => <div className="flex items-center justify-between gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3" key={item.id}><span className="text-sm font-bold">{item.titulo}</span><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void arquivar(item.id)}><Trash2 size={14} /></button></div>)}</PanelList>
-        <PanelList title="Denúncias de chat" empty="Nenhuma denúncia registrada.">{(data.denuncias ?? []).map((denuncia) => { const item = denuncia as { id: string; motivo?: string; prova_descricao?: string; status?: string }; return <div className="rounded-2xl border border-red-400/30 bg-red-500/10 p-3" key={item.id}><p className="text-sm font-black text-red-100">{item.motivo ?? 'Denúncia sem motivo detalhado'}</p><p className="mt-1 text-xs text-red-100/75">{item.prova_descricao ?? 'Sem descrição de prova.'} - {item.status ?? 'pendente'}</p></div> })}</PanelList>
-        <PanelList title="Usuários" empty="Nenhum usuário.">{data.usuarios.map((usuario) => { const user = usuario as { id: string; nome?: string; email?: string }; return <div className="flex items-center justify-between gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3" key={user.id}><span className="text-sm font-bold">{user.nome ?? user.email ?? user.id}</span><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => void banir(user)}><Ban size={14} /></button></div> })}</PanelList>
+    <div className="grid gap-4 p-4">
+      <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
+      <div className="grid gap-3 rounded-3xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]">
+        <div className="foundy-search-input flex items-center gap-3 rounded-2xl border border-foundy-border bg-foundy-surface px-4 py-3">
+          <Search size={18} />
+          <input className="w-full bg-transparent outline-none" value={busca} onChange={(event) => setBusca(event.target.value)} placeholder="Pesquisar usuário, item, e-mail, denúncia, empresa..." />
+        </div>
+        <button className="rounded-xl border border-foundy-border px-4 py-2 text-sm font-bold" type="button" onClick={onRefresh}>Atualizar painel</button>
       </div>
+      <div className="foundy-tabbar flex gap-2 overflow-x-auto rounded-2xl border border-foundy-border bg-foundy-background p-1">
+        {[
+          ['itens', `Itens (${itemRows.length})`],
+          ['usuarios', `Usuários (${userRows.length})`],
+          ['empresas', `Empresas (${companyRows.length})`],
+          ['denuncias', `Denúncias (${reportRows.length})`],
+          ['banidos', `Banidos (${bannedRows.length})`],
+        ].map(([id, label]) => <button className={`shrink-0 rounded-xl px-3 py-2 text-sm font-black ${tab === id ? 'bg-foundy-blue text-white' : 'text-foundy-muted'}`} key={id} type="button" onClick={() => setTab(id as typeof tab)}>{label}</button>)}
+      </div>
+
+      {tab === 'itens' ? <PanelList title="Itens e alertas recentes" empty="Nenhum item encontrado.">{itemRows.map((row) => {
+        const id = String(row.id)
+        const isAlert = Boolean(row.raio_metros)
+        return <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]" key={`${isAlert ? 'alerta' : 'item'}-${id}`}><div><p className="text-sm font-black">{String(row.titulo ?? 'Sem título')}</p><p className="mt-1 text-xs text-foundy-muted">{isAlert ? 'Alerta de perda' : 'Item achado'} - {String(row.status ?? 'sem status')} - publicado por {String(row.usuario_nome ?? row.usuario_email ?? row.usuario_id ?? 'não identificado')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.titulo ?? id)} />{!isAlert ? <button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void arquivar(id)}><Trash2 size={14} /></button> : null}</div></div>
+      })}</PanelList> : null}
+
+      {tab === 'usuarios' ? <PanelList title="Usuários pessoais" empty="Nenhum usuário encontrado.">{userRows.map((row) => <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]" key={String(row.id)}><div><p className="text-sm font-black">{String(row.nome ?? row.email ?? row.id)}</p><p className="mt-1 text-xs text-foundy-muted">{String(row.email ?? 'sem e-mail')} | Karma: {String(row.pontos_luz ?? 0)} | Itens: {String(row.total_itens_postados ?? 0)}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.nome ?? row.email ?? row.id)} /><button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(String(row.id))}>Avisar</button><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => void aplicarMedida(String(row.id), 'chat')}>Bloquear chat</button><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(String(row.id), 'conta')}>Suspender conta</button></div></div>)}</PanelList> : null}
+
+      {tab === 'empresas' ? <PanelList title="Contas empresariais" empty="Nenhuma empresa encontrada.">{companyRows.map((row) => <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]" key={String(row.id)}><div><p className="text-sm font-black">{String(row.empresa_nome ?? row.nome ?? row.email)}</p><p className="mt-1 text-xs text-foundy-muted">{String(row.email ?? 'sem e-mail')} | Catálogo público: {String(row.empresa_catalogo_publico ?? true)} | Itens: {String(row.total_itens_postados ?? 0)}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.empresa_nome ?? row.nome ?? row.id)} /><button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(String(row.id))}>Avisar</button><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(String(row.id), 'conta')}>Suspender</button></div></div>)}</PanelList> : null}
+
+      {tab === 'denuncias' ? <PanelList title="Denúncias de chat e posts" empty="Nenhuma denúncia registrada.">{reportRows.map((row) => { const denunciadoId = String(row.usuario_denunciado_id ?? ''); const origem = row.origem_denuncia === 'chat' ? 'chat' : 'post'; return <div className="grid gap-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3" key={`${origem}-${String(row.id)}`}><div><p className="text-sm font-black text-red-100">{origem === 'chat' ? 'Denúncia de chat' : 'Denúncia de post'}: {String(row.motivo_tipo ?? row.motivo ?? 'sem motivo')}</p><p className="mt-1 text-xs text-red-100/75">Denunciante: {String(row.denunciante_nome ?? row.usuario_denunciante_id ?? 'não identificado')} | Denunciado: {String(row.denunciado_nome ?? row.usuario_denunciado_id ?? 'não identificado')} | Item: {String(row.item_titulo ?? row.alerta_titulo ?? row.item_achado_id ?? row.alerta_perdido_id ?? 'não informado')}</p><p className="mt-2 text-sm text-red-100/85">{String(row.motivo ?? 'Sem descrição detalhada.')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={`Denúncia ${origem}`} />{denunciadoId ? <button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(denunciadoId, row, origem)}>Avisar</button> : null}{denunciadoId ? <button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-100" type="button" onClick={() => void aplicarMedida(denunciadoId, 'chat', row, origem)}>Bloquear chat</button> : null}{denunciadoId ? <button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(denunciadoId, 'conta', row, origem)}>Suspender conta</button> : null}</div></div> })}</PanelList> : null}
+
+      {tab === 'banidos' ? <PanelList title="Usuários com restrição ativa" empty="Nenhum usuário banido no momento.">{bannedRows.map((row) => <div className="grid gap-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3 md:grid-cols-[1fr_auto]" key={String(row.id)}><div><p className="text-sm font-black text-red-100">{String(row.nome ?? row.email ?? row.id)}</p><p className="mt-1 text-xs text-red-100/75">Conta: {String(row.banimento_motivo ?? 'sem banimento de conta')} | Chat: {String(row.chat_banimento_motivo ?? 'sem banimento de chat')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.nome ?? row.email ?? row.id)} /><button className="rounded-xl bg-foundy-green px-3 py-2 text-xs font-black text-slate-950" type="button" onClick={() => void desbanir(String(row.id))}>Desbanir</button></div></div>)}</PanelList> : null}
+
+      {detalhe ? <div className="rounded-3xl border border-foundy-border bg-foundy-background p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-foundy-green">Detalhes</p><h3 className="text-xl font-black">{detalhe.titulo}</h3></div><button className="rounded-xl border border-foundy-border px-3 py-2 text-sm font-bold" type="button" onClick={() => setDetalhe(null)}>Fechar</button></div><dl className="mt-4 grid gap-2 text-sm md:grid-cols-2">{Object.entries(detalhe.dados).map(([key, value]) => <div className="rounded-2xl border border-foundy-border bg-foundy-surface p-3" key={key}><dt className="text-xs font-black uppercase tracking-wide text-foundy-muted">{key}</dt><dd className="mt-1 whitespace-pre-wrap break-words">{typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? 'não informado')}</dd></div>)}</dl></div> : null}
+    </div>
   )
   if (embedded) {
     return <section className="rounded-3xl border border-foundy-border bg-foundy-surface">{content}</section>
@@ -1729,16 +2226,15 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
   )
 }
 
-function ModalBusca({ filtro, buscaTexto, itensVisiveis, totalItens, onFiltroChange, onBuscaChange, onLimpar, onClose }: { filtro: ItemCategory | 'todos'; buscaTexto: string; itensVisiveis: number; totalItens: number; onFiltroChange: (value: ItemCategory | 'todos') => void; onBuscaChange: (value: string) => void; onLimpar: () => void; onClose: () => void }) {
+function ModalBusca({ filtro, buscaTexto, itensVisiveis, totalItens, onFiltroChange, onBuscaChange, onLimpar, onClose }: { filtro: ItemFilter; buscaTexto: string; itensVisiveis: number; totalItens: number; onFiltroChange: (value: ItemFilter) => void; onBuscaChange: (value: string) => void; onLimpar: () => void; onClose: () => void }) {
   return (
     <ModalBase titulo="Lupa Foundy" subtitulo="Filtre por texto, categoria e tags inteligentes." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <div className="foundy-search-input flex items-center gap-3 rounded-2xl border border-foundy-border bg-foundy-background px-4 py-3"><Search size={20} /><input className="w-full bg-transparent outline-none" value={buscaTexto} onChange={(event) => onBuscaChange(event.target.value)} placeholder="Buscar por chaveiro azul, carteira, fone..." /></div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <FilterCard active={filtro === 'todos'} icon={Search} title="Todos" text="Mostrar tudo" onClick={() => onFiltroChange('todos')} />
-          {(Object.entries(categorias) as [ItemCategory, (typeof categorias)[ItemCategory]][]).map(([value, data]) => <FilterCard active={filtro === value} icon={data.Icon} title={data.label} text={data.description} key={value} onClick={() => onFiltroChange(value)} />)}
+          {(Object.entries(filtrosFoundy) as [ItemFilter, (typeof filtrosFoundy)[ItemFilter]][]).map(([value, data]) => <FilterCard active={filtro === value} icon={data.Icon} title={data.label} text={data.description} key={value} onClick={() => onFiltroChange(value)} />)}
         </div>
-        <div className="flex items-center justify-between rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><span>{itensVisiveis} de {totalItens} itens visiveis</span><button className="rounded-xl border border-foundy-border px-3 py-2 font-bold" type="button" onClick={onLimpar}>Limpar</button></div>
+        <div className="flex items-center justify-between rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><span>{itensVisiveis} de {totalItens} itens visíveis</span><button className="rounded-xl border border-foundy-border px-3 py-2 font-bold" type="button" onClick={onLimpar}>Limpar</button></div>
       </div>
     </ModalBase>
   )
@@ -1759,7 +2255,7 @@ function ModalDesafio({ item, resposta, onRespostaChange, onConfirmar, onClose }
   return (
     <ModalBase titulo="Verificação do dono" subtitulo="O chat só abre após validação." onClose={onClose}>
       <div className="grid gap-4 p-4">
-        <div className="rounded-2xl border border-foundy-blue/30 bg-foundy-blue/10 p-4"><p className="text-sm font-bold text-foundy-blue">Desafio</p><p className="mt-1">{item.desafio_pergunta ?? 'Informe um detalhe que so o dono saberia.'}</p></div>
+        <div className="rounded-2xl border border-foundy-blue/30 bg-foundy-blue/10 p-4"><p className="text-sm font-bold text-foundy-blue">Desafio</p><p className="mt-1">{item.desafio_pergunta ?? 'Informe um detalhe que só o dono saberia.'}</p></div>
         <Field label="Sua resposta"><input className="foundy-input" value={resposta} onChange={(event) => onRespostaChange(event.target.value)} /></Field>
         <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={onConfirmar}>Enviar resposta ao publicador</button>
       </div>
@@ -1784,7 +2280,7 @@ function ModalRespostaEnviada({ onClose }: { onClose: () => void }) {
 
 function ModalAguardandoValidacao({ reivindicacaoId, claim, onClose, onValidar }: { reivindicacaoId: string | null; claim: ClaimSummary | null; onClose: () => void; onValidar: (aprovada: boolean) => void }) {
   return (
-    <ModalBase titulo="Validacao do detalhe oculto" subtitulo="O encontrador decide se a resposta confere." onClose={onClose}>
+    <ModalBase titulo="Validação do detalhe oculto" subtitulo="O encontrador decide se a resposta confere." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <p className="text-sm text-foundy-muted">Reivindicação atual: <strong>{reivindicacaoId ?? 'não identificada'}</strong>.</p>
         {claim ? (
@@ -1797,8 +2293,8 @@ function ModalAguardandoValidacao({ reivindicacaoId, claim, onClose, onValidar }
         ) : (
           <p className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm text-amber-100">Não consegui carregar os detalhes completos desta resposta agora. Abra novamente pelo sininho ou pela sua página.</p>
         )}
-        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => onValidar(true)}>A resposta esta correta</button>
-        <button className="h-11 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={() => onValidar(false)}>A resposta esta incorreta</button>
+        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => onValidar(true)}>A resposta está correta</button>
+        <button className="h-11 rounded-xl bg-red-500 px-4 text-sm font-black text-white" type="button" onClick={() => onValidar(false)}>A resposta está incorreta</button>
       </div>
     </ModalBase>
   )

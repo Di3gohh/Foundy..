@@ -25,7 +25,9 @@ async def _usuario_base(usuario_id: UUID) -> dict:
         supabase.table("usuarios")
         .select(
             "id,nome,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,email,"
-            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf"
+            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,"
+            "empresa_catalogo_publico,banido_ate,banimento_motivo,banido_permanente,chat_banido_ate,"
+            "chat_banimento_motivo,chat_banido_permanente"
         )
         .eq("id", str(usuario_id))
         .is_("removido_em", "null")
@@ -33,7 +35,7 @@ async def _usuario_base(usuario_id: UUID) -> dict:
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
     return response.data[0]
 
 
@@ -43,7 +45,7 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
     for column in ("encontrador_usuario_id", "dono_usuario_id"):
         response = await (
             supabase.table("salas_chat")
-            .select("id,item_achado_id,encontrador_usuario_id,dono_usuario_id,status,criado_em,atualizado_em")
+            .select("id,item_achado_id,alerta_perdido_id,encontrador_usuario_id,dono_usuario_id,status,criado_em,atualizado_em,origem")
             .eq(column, str(usuario_id))
             .order("atualizado_em", desc=True)
             .limit(50)
@@ -56,6 +58,7 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
         return []
 
     item_ids = list({row["item_achado_id"] for row in chats.values() if row.get("item_achado_id")})
+    alerta_ids = list({row["alerta_perdido_id"] for row in chats.values() if row.get("alerta_perdido_id")})
     other_user_ids = list(
         {
             row[column]
@@ -68,6 +71,11 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
     if item_ids:
         itens = await supabase.table("itens_achados").select("id,titulo").in_("id", item_ids).execute()
         item_titles = {row["id"]: row["titulo"] for row in itens.data}
+
+    alerta_titles: dict[str, str] = {}
+    if alerta_ids:
+        alertas = await supabase.table("alertas_perdidos").select("id,titulo").in_("id", alerta_ids).execute()
+        alerta_titles = {row["id"]: row["titulo"] for row in alertas.data}
 
     users_by_id: dict[str, dict] = {}
     if other_user_ids:
@@ -99,9 +107,10 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
             {
                 "id": row["id"],
                 "item_achado_id": row["item_achado_id"],
+                "alerta_perdido_id": row.get("alerta_perdido_id"),
                 "encontrador_usuario_id": row.get("encontrador_usuario_id"),
                 "dono_usuario_id": row.get("dono_usuario_id"),
-                "item_titulo": item_titles.get(row["item_achado_id"], "Item encontrado"),
+                "item_titulo": item_titles.get(row.get("item_achado_id") or "", alerta_titles.get(row.get("alerta_perdido_id") or "", "Conversa Foundy")),
                 "status": row["status"],
                 "criado_em": row["criado_em"],
                 "atualizado_em": row["atualizado_em"],
@@ -140,7 +149,7 @@ async def painel_usuario(usuario_id: UUID) -> dict:
 
     alertas = await (
         supabase.table("alertas_perdidos")
-        .select("id,titulo,descricao,status,criado_em,atualizado_em")
+        .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em")
         .eq("usuario_id", str(usuario_id))
         .order("criado_em", desc=True)
         .limit(50)
@@ -204,6 +213,7 @@ async def painel_usuario(usuario_id: UUID) -> dict:
             "empresa_endereco_publico": usuario.get("empresa_endereco_publico") or "",
             "empresa_cidade": usuario.get("empresa_cidade") or "",
             "empresa_uf": usuario.get("empresa_uf") or "",
+            "empresa_catalogo_publico": str(bool(usuario.get("empresa_catalogo_publico", True))).lower(),
         },
         "itens_postados": [
             {

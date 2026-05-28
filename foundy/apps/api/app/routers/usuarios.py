@@ -29,6 +29,7 @@ class UsuarioCadastro(BaseModel):
     empresa_endereco_publico: str | None = Field(default=None, max_length=220)
     empresa_cidade: str | None = Field(default=None, max_length=80)
     empresa_uf: str | None = Field(default=None, min_length=2, max_length=2)
+    empresa_catalogo_publico: bool = True
 
 
 class UsuarioLogin(BaseModel):
@@ -86,6 +87,7 @@ def _session_payload(usuario: dict) -> dict[str, str]:
         "aceita_notificacoes_email": str(bool(usuario.get("aceita_notificacoes_email", True))).lower(),
         "is_admin": str(_is_admin(email, usuario.get("papel"))).lower(),
         "tipo_conta": usuario.get("tipo_conta") or "pessoal",
+        "empresa_catalogo_publico": str(bool(usuario.get("empresa_catalogo_publico", True))).lower(),
         "empresa_nome": usuario.get("empresa_nome") or "",
         "empresa_descricao": usuario.get("empresa_descricao") or "",
         "empresa_endereco_publico": usuario.get("empresa_endereco_publico") or "",
@@ -94,17 +96,32 @@ def _session_payload(usuario: dict) -> dict[str, str]:
     }
 
 
+def _future_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _ban_message(usuario: dict) -> str | None:
+    if usuario.get("banido_permanente"):
+        return f"Conta banida permanentemente. Motivo: {usuario.get('banimento_motivo') or 'violação dos termos.'}"
+    banido_ate = _future_datetime(usuario.get("banido_ate"))
+    if banido_ate and banido_ate > datetime.now(timezone.utc):
+        return f"Conta temporariamente banida até {banido_ate.astimezone(timezone.utc).strftime('%d/%m/%Y')}. Motivo: {usuario.get('banimento_motivo') or 'violação dos termos.'}"
+    return None
+
+
 @router.post("/cadastrar", status_code=status.HTTP_201_CREATED)
 async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: BackgroundTasks) -> dict[str, object]:
     if not payload.maior_de_idade:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="O Foundy e permitido apenas para maiores de 18 anos.",
+            detail="O Foundy é permitido apenas para maiores de 18 anos.",
         )
     if not payload.aceitou_termos:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Leia e aceite os Termos de Uso e a Politica de Privacidade para criar sua conta.",
+            detail="Leia e aceite os Termos de Uso e a Política de Privacidade para criar sua conta.",
         )
     if payload.tipo_conta == "empresa" and (
         not payload.empresa_nome
@@ -114,7 +131,7 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Para conta empresarial, informe nome, endereco publico, cidade e UF da instituicao.",
+            detail="Para conta empresarial, informe nome, endereço público, cidade e UF da instituição.",
         )
 
     supabase = get_supabase()
@@ -131,7 +148,7 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
     if usuario_existente.data:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Este e-mail ja esta cadastrado. Clique em Entrar ou use outro e-mail.",
+            detail="Este e-mail já está cadastrado. Clique em Entrar ou use outro e-mail.",
         )
 
     smtp_configurado = has_smtp_settings()
@@ -164,26 +181,27 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
                 "empresa_cidade": payload.empresa_cidade.strip() if payload.empresa_cidade else None,
                 "empresa_uf": payload.empresa_uf.strip().upper() if payload.empresa_uf else None,
                 "empresa_verificada": False,
+                "empresa_catalogo_publico": payload.empresa_catalogo_publico,
             }
         ).execute()
     except APIError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Nao foi possivel cadastrar este e-mail. Verifique se ele ja foi usado anteriormente.",
+            detail="Não foi possível cadastrar este e-mail. Verifique se ele já foi usado anteriormente.",
         ) from exc
 
     if smtp_configurado and token:
         background_tasks.add_task(send_verification_email, email_normalizado, token)
         return {
-            "mensagem": "Cadastro criado. Enviamos um e-mail de confirmacao.",
+            "mensagem": "Cadastro criado. Enviamos um e-mail de confirmação.",
             "email_verificado": False,
             "login_liberado": False,
         }
 
     return {
         "mensagem": (
-            "Conta criada e verificada automaticamente para testes, pois o envio de e-mail SMTP ainda nao esta configurado. "
-            "Voce ja pode entrar e testar os recursos protegidos."
+            "Conta criada e verificada automaticamente para testes, pois o envio de e-mail SMTP ainda não está configurado. "
+            "Você já pode entrar e testar os recursos protegidos."
         ),
         "email_verificado": True,
         "login_liberado": True,
@@ -202,7 +220,7 @@ async def confirmar_email(payload: ConfirmarEmail) -> dict[str, str]:
     )
 
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token invalido ou ja utilizado.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido ou já utilizado.")
 
     usuario = response.data[0]
     expira_em = datetime.fromisoformat(usuario["email_verificacao_expira_em"].replace("Z", "+00:00"))
@@ -233,7 +251,8 @@ async def entrar(payload: UsuarioLogin) -> dict[str, str]:
         .select(
             "id,nome,email,senha_hash,email_verificado_em,nivel_perfil,pontos_luz,"
             "foto_url,ocupacao,aceita_notificacoes_email,papel,banido_ate,banimento_motivo,"
-            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf"
+            "banido_permanente,banimento_tipo,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente,"
+            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico"
         )
         .eq("email", payload.email.lower())
         .is_("removido_em", "null")
@@ -241,14 +260,12 @@ async def entrar(payload: UsuarioLogin) -> dict[str, str]:
     )
 
     if not response.data or not verify_password(payload.senha, response.data[0]["senha_hash"]):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha invalidos.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha inválidos.")
 
     usuario = response.data[0]
-    if usuario.get("banido_ate"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Conta temporariamente banida. Motivo: {usuario.get('banimento_motivo') or 'violacao dos termos.'}",
-        )
+    ban_message = _ban_message(usuario)
+    if ban_message:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ban_message)
     if usuario["email_verificado_em"] is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Confirme seu e-mail antes de continuar.")
 
@@ -274,15 +291,15 @@ async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> di
         .is_("removido_em", "null")
         .select(
             "id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,"
-            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf"
+            "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico"
         )
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
 
     result = _session_payload(response.data[0])
-    result["mensagem"] = "Perfil atualizado com seguranca."
+    result["mensagem"] = "Perfil atualizado com segurança."
     return result
 
 
@@ -298,7 +315,7 @@ async def perfil_publico(usuario_id: UUID) -> dict[str, object]:
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
 
     usuario = response.data[0]
     pontos = int(usuario.get("pontos_luz") or 0)
@@ -324,7 +341,7 @@ async def criar_hub_verificado(payload: HubVerificadoCreate) -> dict[str, str]:
         .execute()
     )
     if not usuario.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario nao encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
     if usuario.data[0].get("email_verificado_em") is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Confirme o e-mail antes de solicitar o hub.")
 
@@ -345,9 +362,9 @@ async def criar_hub_verificado(payload: HubVerificadoCreate) -> dict[str, str]:
         .execute()
     )
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel registrar o hub verificado.")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível registrar o hub verificado.")
 
-    return {"mensagem": "Solicitacao de Hub Verificado recebida.", "hub_id": response.data[0]["id"]}
+    return {"mensagem": "Solicitação de Hub Verificado recebida.", "hub_id": response.data[0]["id"]}
 
 
 @router.get("/hubs-verificados/lista")

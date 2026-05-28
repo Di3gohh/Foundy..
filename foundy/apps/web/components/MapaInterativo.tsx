@@ -34,11 +34,13 @@ export default function MapaInterativo({
   itens,
   itemSelecionado,
   onSelecionarItem,
+  onVerItem,
   userLocation,
 }: {
   itens: ItemAchado[]
   itemSelecionado: ItemAchado | null
   onSelecionarItem: (item: ItemAchado) => void
+  onVerItem?: (item: ItemAchado) => void
   userLocation?: GeoPoint | null
 }) {
   const centro: [number, number] = itemSelecionado
@@ -78,9 +80,17 @@ export default function MapaInterativo({
           radius={item.raio_mascara_metros}
         >
           <Popup>
-            <strong>{item.titulo}</strong>
-            <br />
-            {item.local_descricao ?? 'Local aproximado'}
+            <div className="grid min-w-40 gap-2">
+              <strong>{item.titulo}</strong>
+              <span>{item.local_descricao ?? 'Local aproximado'}</span>
+              <button
+                className="rounded-lg bg-[#2d7ff9] px-3 py-1 text-xs font-bold text-white"
+                type="button"
+                onClick={() => onVerItem?.(item)}
+              >
+                Ver item
+              </button>
+            </div>
           </Popup>
         </Circle>
       ))}
