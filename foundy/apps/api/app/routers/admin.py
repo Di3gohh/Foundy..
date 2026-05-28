@@ -97,17 +97,19 @@ async def _resolver_denuncia(payload: AdminAction, status_denuncia: str, decisao
     table = "denuncias_extorsao" if payload.denuncia_tipo == "chat" else "denuncias_posts"
     if table == "denuncias_extorsao" and status_denuncia in {"avisado", "banido", "resolvido"}:
         status_denuncia = "resolvida"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    updates = {
+        "status": status_denuncia,
+        "decisao_admin": decisao,
+        "decidido_em": now_iso,
+        "admin_usuario_id": str(payload.admin_usuario_id),
+    }
+    if status_denuncia in {"resolvida", "resolvido"}:
+        updates["resolvida_em"] = now_iso
     response = await (
         get_supabase()
         .table(table)
-        .update(
-            {
-                "status": status_denuncia,
-                "decisao_admin": decisao,
-                "decidido_em": datetime.now(timezone.utc).isoformat(),
-                "admin_usuario_id": str(payload.admin_usuario_id),
-            }
-        )
+        .update(updates)
         .eq("id", str(payload.denuncia_id))
         .select("usuario_denunciante_id")
         .execute()
@@ -175,7 +177,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         supabase.table("denuncias_extorsao")
         .select(
             "id,sala_chat_id,item_achado_id,usuario_denunciante_id,usuario_denunciado_id,mensagem_chat_id,"
-            "motivo,prova_descricao,prova_arquivo_nome,status,decisao_admin,criado_em,decidido_em"
+            "motivo,prova_descricao,prova_arquivo_nome,status,decisao_admin,criado_em,decidido_em,resolvida_em"
         )
         .order("criado_em", desc=True)
         .limit(200)
@@ -185,7 +187,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         supabase.table("denuncias_posts")
         .select(
             "id,item_achado_id,alerta_perdido_id,usuario_denunciante_id,usuario_denunciado_id,motivo_tipo,"
-            "motivo,status,decisao_admin,criado_em,decidido_em"
+            "motivo,status,decisao_admin,criado_em,decidido_em,resolvida_em"
         )
         .order("criado_em", desc=True)
         .limit(200)
