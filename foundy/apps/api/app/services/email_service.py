@@ -59,6 +59,8 @@ async def _send_resend_email(to_email: str, subject: str, body: str) -> bool:
         "subject": subject,
         "text": body,
     }
+    if settings.support_email:
+        payload["reply_to"] = [settings.support_email]
     request = urllib.request.Request(
         "https://api.resend.com/emails",
         data=json.dumps(payload).encode("utf-8"),

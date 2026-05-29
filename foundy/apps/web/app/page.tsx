@@ -162,6 +162,13 @@ const onboardingKey = 'foundy-onboarding-v2'
 const supportEmail = 'foundy.company@gmail.com'
 const supportMailto = `mailto:${supportEmail}?subject=Contato%20Foundy`
 
+function mergeChatMessages(current: MensagemChat[], incoming: MensagemChat[]) {
+  const byId = new Map<string, MensagemChat>()
+  for (const message of current) byId.set(message.id, message)
+  for (const message of incoming) byId.set(message.id, message)
+  return Array.from(byId.values()).sort((a, b) => new Date(a.criado_em).getTime() - new Date(b.criado_em).getTime())
+}
+
 const placeholdersPorCategoria: Record<ItemCategory, string> = {
   chaves: 'https://images.unsplash.com/photo-1592887102811-2f9f67f7f05b?auto=format&fit=crop&w=1200&q=80',
   eletronicos: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=1200&q=80',
@@ -445,7 +452,7 @@ export default function Home() {
       try {
         const dados = await listarMensagensChat(salaChatId, usuarioId)
         if (!active) return
-        setMensagensChat(dados)
+        setMensagensChat((atuais) => (dados.length > 0 ? mergeChatMessages(atuais, dados) : atuais))
         setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
       } catch (error) {
         setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível carregar o chat seguro.')
@@ -486,7 +493,7 @@ export default function Home() {
             { event: 'INSERT', schema: 'public', table: 'mensagens_chat', filter: `sala_chat_id=eq.${salaChatId}` },
             () => {
               void listarMensagensChat(salaChatId, usuarioId).then((dados) => {
-                setMensagensChat(dados)
+                setMensagensChat((atuais) => (dados.length > 0 ? mergeChatMessages(atuais, dados) : atuais))
                 setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
               })
               void carregarPainel(sessao)
@@ -760,13 +767,14 @@ export default function Home() {
       return
     }
     try {
+      setChatFeedback('Enviando mensagem segura...')
       const enviada = await enviarMensagemChat(salaChatId, sessao.usuario_id, text)
-      setMensagensChat((atuais) => [...atuais, enviada])
+      setMensagensChat((atuais) => mergeChatMessages(atuais, [enviada]))
       setMensagemChatAtual('')
       setChatFeedback('Mensagem enviada e registrada na conversa.')
       setDenunciaDisponivel((atual) => atual || enviada.denunciar_extorsao_visivel)
       void listarMensagensChat(salaChatId, sessao.usuario_id)
-        .then(setMensagensChat)
+        .then((dados) => setMensagensChat((atuais) => (dados.length > 0 ? mergeChatMessages(atuais, dados) : atuais)))
         .catch(() => undefined)
       void carregarPainel(sessao)
     } catch (error) {
@@ -2253,7 +2261,19 @@ function ModalChatSeguro({
               <p className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm text-foundy-green">Este chat foi resolvido e ficou salvo apenas no histórico.</p>
             ) : (
               <div className="flex gap-2">
-                <textarea className="foundy-input min-h-12 flex-1 resize-none" value={valorAtual} onChange={(event) => onChangeValor(event.target.value)} placeholder="Escreva uma mensagem segura..." />
+                <textarea
+                  className="foundy-input min-h-12 flex-1 resize-none"
+                  value={valorAtual}
+                  onChange={(event) => onChangeValor(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      onEnviar()
+                    }
+                  }}
+                  placeholder="Escreva uma mensagem segura..."
+                  aria-label="Mensagem do chat. Enter envia, Shift Enter quebra linha."
+                />
                 <button className="grid size-12 shrink-0 place-items-center rounded-2xl bg-foundy-blue text-white" type="button" onClick={onEnviar} aria-label="Enviar mensagem"><Send size={18} /></button>
               </div>
             )}
@@ -2538,11 +2558,43 @@ function ModalAguardandoValidacao({ reivindicacaoId, claim, onClose, onValidar }
 }
 
 function ModalManifestoSeguranca({ onClose }: { onClose: () => void }) {
-  return <ModalBase titulo="Segurança em Primeiro Lugar" subtitulo="O Protocolo Foundy." onClose={onClose}><div className="grid gap-3 p-4"><TrustCard title="Encontros apenas em locais públicos" text="Nunca marque em residência, local isolado ou estacionamento vazio." /><TrustCard title="Use a luz do dia" text="Marque entre 8h e 18h, em local movimentado." /><TrustCard title="Faça a pergunta secreta" text="Comprove posse antes do encontro." /><TrustCard title="Não vá sozinho" text="Leve um amigo ou familiar sempre que possível." /><TrustCard title="Empresas são catálogo" text="Instituições exibem itens para retirada presencial, sem chat, segredo ou reivindicação online." /><p className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm">O Foundy é uma ponte digital. Não nos responsabilizamos por encontros físicos.</p></div></ModalBase>
+  return (
+    <ModalBase titulo="Segurança em Primeiro Lugar" subtitulo="O Protocolo Foundy." onClose={onClose}>
+      <div className="grid gap-3 p-4">
+        <p className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm leading-6 text-foundy-green">
+          O Foundy conecta a honestidade de quem achou com o alívio de quem perdeu. Mas nenhum objeto vale mais do que a sua segurança física.
+        </p>
+        <TrustCard title="Encontros apenas em locais públicos" text="Nunca marque em residência, local isolado, estacionamento vazio ou endereço particular. Prefira shoppings, estações, praças movimentadas ou bases policiais." />
+        <TrustCard title="Use a luz do dia" text="Combine a retirada entre 8h e 18h, em local iluminado e com fluxo de pessoas." />
+        <TrustCard title="Faça a pergunta secreta" text="Antes do encontro, confirme o detalhe oculto do item. A conversa só deve avançar quando a posse estiver minimamente comprovada." />
+        <TrustCard title="Não vá sozinho" text="Sempre que possível, leve um amigo ou familiar. Avise alguém de confiança sobre o local e horário." />
+        <TrustCard title="Nunca pague resgate" text="PIX, taxa obrigatória, frete antecipado, cobrança ou recompensa como condição de devolução violam o Protocolo Foundy." />
+        <TrustCard title="Empresas são catálogo" text="Instituições exibem itens para retirada presencial, sem chat, segredo ou reivindicação online." />
+        <p className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm leading-6">
+          O Foundy é uma ponte digital de comunicação e comunidade. Não nos responsabilizamos por encontros físicos, por isso siga o protocolo e cuide de si mesmo e do próximo.
+        </p>
+      </div>
+    </ModalBase>
+  )
 }
 
 function ModalTermosLgpd({ onClose }: { onClose: () => void }) {
-  return <ModalBase titulo="Termos de Uso e LGPD" subtitulo="Resumo operacional." onClose={onClose}><div className="grid gap-3 p-4"><TrustCard title="Escopo do serviço" text="O Foundy aproxima pessoas que perderam e encontraram objetos. Não armazenamos, transportamos ou garantimos itens." /><TrustCard title="Privacidade" text="Localização exata, telefone, e-mail real e endereço residencial não devem ser exibidos publicamente." /><TrustCard title="Conduta proibida" text="É proibido cobrar resgate, pedir PIX antecipado, publicar itens ilegais ou expor dados sensíveis." /><TrustCard title="Contas empresariais" text="Empresas usam o Foundy como catálogo institucional. A retirada é presencial no endereço público informado pela instituição." /><TrustCard title="Uso proibido para menores" text="A plataforma é exclusiva para maiores de 18 anos." /></div></ModalBase>
+  return (
+    <ModalBase titulo="Termos de Uso e LGPD" subtitulo="Resumo profissional para uso seguro." onClose={onClose}>
+      <div className="grid gap-3 p-4">
+        <TrustCard title="Escopo do serviço" text="O Foundy é um mural digital comunitário. A plataforma aproxima pessoas, mas não armazena, transporta, inspeciona ou garante o estado de conservação de itens." />
+        <TrustCard title="Privacidade por padrão" text="Localização exata, telefone, e-mail real, CPF, RG, dados bancários e endereço residencial não devem ser exibidos publicamente." />
+        <TrustCard title="Imagens e documentos" text="Fotos de documentos não devem ser publicadas. Ao marcar um item como documento, a foto pública é removida e a descrição deve ser censurada." />
+        <TrustCard title="Conduta proibida" text="É proibido cobrar resgate, pedir PIX antecipado, ameaçar, insultar, solicitar senhas, publicar itens ilegais ou expor dados sensíveis." />
+        <TrustCard title="Moderação progressiva" text="A primeira ocorrência gera aviso; a segunda suspende o chat; a terceira suspende a conta; a quarta pode gerar banimento permanente." />
+        <TrustCard title="Contas empresariais" text="Empresas usam o Foundy como catálogo institucional. A retirada é presencial no endereço público informado e a conta pode exigir CNPJ, CEP e aprovação." />
+        <TrustCard title="Uso proibido para menores" text="A plataforma é exclusiva para maiores de 18 anos para reduzir riscos de aliciamento, encontros inseguros e exposição indevida." />
+        <p className="rounded-2xl border border-foundy-border bg-foundy-background p-4 text-sm leading-6 text-foundy-muted">
+          Contato oficial para dúvidas, sugestões e suporte: {supportEmail}. Criado por Diego Corazza e Gustavo Alves.
+        </p>
+      </div>
+    </ModalBase>
+  )
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

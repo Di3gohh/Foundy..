@@ -14,6 +14,7 @@ from app.core.security import hash_password
 from app.db.supabase_client import get_supabase
 from app.services.ai_processing import generate_hashtag_descriptors
 from app.services.email_service import send_notification_email, send_support_email
+from app.services.moderation_service import aplicar_moderacao_progressiva
 from app.services.storage_service import store_public_image_if_needed
 
 
@@ -363,6 +364,15 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate, background_tasks: Bac
 
     scan = scan_item_text(titulo, descricao)
     if scan.blocked:
+        await aplicar_moderacao_progressiva(
+            usuario_id=payload.usuario_id,
+            origem="post_item_achado",
+            motivos=scan.reasons,
+            conteudo_tipo="item_achado",
+            conteudo_id=None,
+            trecho=f"{titulo}\n{descricao}",
+            background_tasks=background_tasks,
+        )
         background_tasks.add_task(
             send_support_email,
             "Publicação bloqueada pela moderação Foundy",
@@ -728,6 +738,15 @@ async def enviar_mensagem_chat(
             )
 
     if scan.flagged:
+        acao_moderacao = await aplicar_moderacao_progressiva(
+            usuario_id=payload.usuario_id,
+            origem="chat",
+            motivos=scan.reasons,
+            conteudo_tipo="mensagem_chat",
+            conteudo_id=response.data[0]["id"],
+            trecho=mensagem,
+            background_tasks=background_tasks,
+        )
         await (
             supabase.table("salas_chat")
             .update({"status": "em_revisao", "atualizado_em": datetime.now(timezone.utc).isoformat()})
@@ -744,7 +763,11 @@ async def enviar_mensagem_chat(
                         "usuario_id": participante,
                         "tipo": "chat",
                         "titulo": "Possível extorsão detectada",
-                        "mensagem": "Detectamos termos financeiros suspeitos na conversa. Use o botão Denunciar Extorsão.",
+                        "mensagem": (
+                            "Detectamos uma mensagem fora das diretrizes na conversa. "
+                            "Use Perfil e denúncia se você se sentir inseguro. "
+                            f"Medida automática aplicada: {acao_moderacao['titulo']}."
+                        ),
                         "item_achado_id": sala.get("item_achado_id"),
                         "alerta_perdido_id": sala.get("alerta_perdido_id"),
                         "sala_chat_id": str(sala_chat_id),

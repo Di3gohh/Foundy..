@@ -6,11 +6,12 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from postgrest.exceptions import APIError
 
-from app.core.filters import censor_sensitive_text
+from app.core.filters import censor_sensitive_text, scan_item_text
 from app.core.geo import mask_coordinates
 from app.core.geo import validate_coordinates
 from app.db.supabase_client import get_supabase
 from app.services.email_service import send_notification_email
+from app.services.moderation_service import aplicar_moderacao_progressiva
 from app.services.storage_service import store_public_image_if_needed
 
 
@@ -86,7 +87,7 @@ def _ensure_chat_allowed(usuario: dict) -> None:
 
 
 @router.post("/alertas-perdidos", status_code=status.HTTP_201_CREATED)
-async def criar_alerta_perdido(payload: AlertaPerdidoCreate) -> dict[str, str]:
+async def criar_alerta_perdido(payload: AlertaPerdidoCreate, background_tasks: BackgroundTasks) -> dict[str, str]:
     await _buscar_usuario_verificado(payload.usuario_id)
     try:
         validate_coordinates(payload.latitude, payload.longitude)
@@ -106,6 +107,18 @@ async def criar_alerta_perdido(payload: AlertaPerdidoCreate) -> dict[str, str]:
     if payload.categoria == "documentos":
         titulo = censor_sensitive_text(titulo)
         descricao = censor_sensitive_text(descricao)
+    scan = scan_item_text(titulo, descricao)
+    if scan.blocked:
+        await aplicar_moderacao_progressiva(
+            usuario_id=payload.usuario_id,
+            origem="post_alerta_perdido",
+            motivos=scan.reasons,
+            conteudo_tipo="alerta_perdido",
+            conteudo_id=None,
+            trecho=f"{titulo}\n{descricao}",
+            background_tasks=background_tasks,
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=scan.reasons)
     try:
         response = await (
             supabase.table("alertas_perdidos")

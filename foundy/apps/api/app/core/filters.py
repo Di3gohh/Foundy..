@@ -45,9 +45,13 @@ EXTORTION_TERMS = {
     "cobrar",
     "cobrado",
     "taxa",
+    "taxa de devolucao",
+    "taxa de entrega",
     "taxinha",
     "taxinha de entrega",
     "ajuda de custo",
+    "valor simbolico",
+    "ajudinha",
     "resgate",
     "resgatar",
     "recompensa obrigatoria",
@@ -78,6 +82,9 @@ EXTORTION_TERMS = {
     "mercado pago",
     "cripto",
     "bitcoin",
+    "pixzinho",
+    "manda dinheiro",
+    "me paga",
 }
 
 COERCION_TERMS = {
@@ -91,6 +98,8 @@ COERCION_TERMS = {
     "não entrego",
     "para devolver",
     "para entregar",
+    "para pegar de volta",
+    "se quiser de volta",
     "se pagar",
     "se nao pagar",
     "se não pagar",
@@ -104,6 +113,7 @@ COERCION_TERMS = {
     "antes da entrega",
     "depois que pagar",
     "paga primeiro",
+    "pague primeiro",
     "so depois",
     "só depois",
     "libero quando",
@@ -113,6 +123,66 @@ COERCION_TERMS = {
     "não vou devolver",
 }
 
+INSULT_TERMS = {
+    "burro",
+    "burra",
+    "idiota",
+    "imbecil",
+    "otario",
+    "otaria",
+    "lixo",
+    "palhaco",
+    "palhaca",
+    "vagabundo",
+    "vagabunda",
+    "golpista",
+    "fdp",
+    "filho da puta",
+    "puta",
+    "merda",
+    "porra",
+    "caralho",
+    "desgracado",
+    "desgracada",
+    "arrombado",
+    "arrombada",
+    "caloteiro",
+    "caloteira",
+}
+
+THREAT_TERMS = {
+    "vou te bater",
+    "vou te quebrar",
+    "vou te pegar",
+    "vou te achar",
+    "vou te matar",
+    "te mato",
+    "te quebro",
+    "ameaca",
+    "se nao aparecer",
+    "sei onde voce mora",
+    "vou na sua casa",
+    "vai se arrepender",
+    "vou acabar com voce",
+    "cuidado comigo",
+    "vou expor voce",
+    "vou publicar seus dados",
+}
+
+SCAM_TERMS = {
+    "manda codigo",
+    "me manda o codigo",
+    "codigo sms",
+    "codigo do sms",
+    "senha",
+    "token",
+    "login",
+    "cartao de credito",
+    "dados bancarios",
+    "numero do cartao",
+    "codigo de verificacao",
+    "confirma sua senha",
+}
 LEETSPEAK_TABLE = str.maketrans(
     {
         "0": "o",
@@ -157,10 +227,17 @@ def censor_sensitive_text(value: str) -> str:
 def scan_item_text(title: str, description: str) -> ScanResult:
     original = f"{title}\n{description}"
     normalized = normalize_text(original)
+    searchable, compact = _searchable_text(original)
     reasons: list[str] = []
 
     if any(term in normalized for term in {normalize_text(term) for term in ILLICIT_TERMS}):
         reasons.append("O texto contém termos não permitidos para publicação.")
+    if any(normalize_text(term) in searchable for term in THREAT_TERMS):
+        reasons.append("O texto contem ameaca ou intimidacao.")
+    if any(normalize_text(term) in searchable for term in INSULT_TERMS):
+        reasons.append("O texto contem ofensa ou palavra de baixo calao.")
+    if any(normalize_text(term).replace(" ", "") in compact for term in SCAM_TERMS):
+        reasons.append("O texto solicita dados sensiveis ou credenciais.")
     if EMAIL_RE.search(original):
         reasons.append("Remova e-mails da descrição pública.")
     if CPF_RE.search(original):
@@ -225,4 +302,49 @@ def scan_chat_message(body: str) -> ScanResult:
             ],
         )
 
+    threat_matches = [
+        term
+        for term in THREAT_TERMS
+        if normalize_text(term) in normalized or normalize_text(term).replace(" ", "") in compact
+    ]
+    scam_matches = [
+        term
+        for term in SCAM_TERMS
+        if normalize_text(term) in normalized or normalize_text(term).replace(" ", "") in compact
+    ]
+    insult_matches = [
+        term
+        for term in INSULT_TERMS
+        if normalize_text(term) in normalized or normalize_text(term).replace(" ", "") in compact
+    ]
+
+    if threat_matches:
+        return ScanResult(
+            blocked=False,
+            flagged=True,
+            reasons=[
+                "Mensagem sinalizada por ameaca, intimidacao ou risco fisico.",
+                f"Termos de risco detectados: {', '.join(threat_matches[:3])}.",
+            ],
+        )
+
+    if scam_matches:
+        return ScanResult(
+            blocked=False,
+            flagged=True,
+            reasons=[
+                "Mensagem sinalizada por pedido de dados sensiveis ou possivel golpe.",
+                f"Termos suspeitos detectados: {', '.join(scam_matches[:3])}.",
+            ],
+        )
+
+    if insult_matches:
+        return ScanResult(
+            blocked=False,
+            flagged=True,
+            reasons=[
+                "Mensagem sinalizada por ofensa, insulto ou palavra de baixo calao.",
+                f"Termos ofensivos detectados: {', '.join(insult_matches[:3])}.",
+            ],
+        )
     return ScanResult(blocked=False, flagged=False, reasons=[])
