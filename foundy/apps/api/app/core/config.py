@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = Field(alias="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     access_token_expire_minutes: int = Field(default=10080, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"], alias="CORS_ORIGINS")
+    cors_origins_raw: str = Field(default="http://localhost:3000", alias="CORS_ORIGINS")
     location_mask_radius_meters: int = Field(default=500, alias="LOCATION_MASK_RADIUS_METERS")
     app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
     smtp_host: str | None = Field(default=None, alias="SMTP_HOST")
@@ -24,26 +24,20 @@ class Settings(BaseSettings):
     resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
     resend_from_email: str | None = Field(default=None, alias="RESEND_FROM_EMAIL")
     support_email: str = Field(default="foundy.company@gmail.com", alias="SUPPORT_EMAIL")
-    admin_emails: list[str] = Field(default_factory=lambda: ["foundy.company@gmail.com"], alias="ADMIN_EMAILS")
+    admin_emails_raw: str = Field(default="foundy.company@gmail.com", alias="ADMIN_EMAILS")
     supabase_storage_bucket: str = Field(default="foundy-images", alias="SUPABASE_STORAGE_BUCKET")
     storage_max_image_bytes: int = Field(default=5_242_880, alias="STORAGE_MAX_IMAGE_BYTES")
     ip_hash_secret: str | None = Field(default=None, alias="IP_HASH_SECRET")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def split_cors_origins(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
 
-    @field_validator("admin_emails", mode="before")
-    @classmethod
-    def split_admin_emails(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            return [email.strip().lower() for email in value.split(",") if email.strip()]
-        return [email.lower() for email in value]
+    @property
+    def admin_emails(self) -> list[str]:
+        return [email.strip().lower() for email in self.admin_emails_raw.split(",") if email.strip()]
 
     @property
     def supabase_backend_key(self) -> str | None:

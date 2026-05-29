@@ -3,8 +3,6 @@ import re
 import unicodedata
 from io import BytesIO
 
-import cv2
-import numpy as np
 from PIL import Image, ImageFilter
 
 
@@ -69,23 +67,18 @@ def generate_hashtag_descriptors(*text_blocks: str) -> list[str]:
 
 
 def blur_faces_and_sensitive_regions(image_bytes: bytes, extracted_text: str = "") -> tuple[bytes, list[str], list[str]]:
+    """Apply lightweight privacy processing compatible with Vercel Python functions.
+
+    OpenCV was intentionally removed from the serverless runtime because it made
+    the API bundle too large. This keeps document censorship active and leaves a
+    clear seam for a future external face-detection service.
+    """
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
     image.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
-    cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
 
     reasons: list[str] = []
     generated_tags = generate_hashtag_descriptors(extracted_text)
-
-    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
-
-    for x, y, w, h in faces:
-        region = image.crop((x, y, x + w, y + h)).filter(ImageFilter.GaussianBlur(radius=18))
-        image.paste(region, (x, y))
-
-    if len(faces) > 0:
-        reasons.append("Rosto detectado e desfocado automaticamente.")
+    normalized_hint = _normalize_text(extracted_text)
 
     if CPF_RE.search(extracted_text) or RG_RE.search(extracted_text):
         width, height = image.size
@@ -96,6 +89,12 @@ def blur_faces_and_sensitive_regions(image_bytes: bytes, extracted_text: str = "
         reasons.append("Possível documento detectado. Dados pessoais foram censurados.")
         if "#DocumentoPessoal" not in generated_tags:
             generated_tags.append("#DocumentoPessoal")
+
+    if "rosto" in normalized_hint or "face" in normalized_hint:
+        width, height = image.size
+        top_region = image.crop((0, 0, width, int(height * 0.38))).filter(ImageFilter.GaussianBlur(radius=14))
+        image.paste(top_region, (0, 0))
+        reasons.append("Área superior desfocada por possível rosto informado no texto.")
 
     output = BytesIO()
     image.save(output, format="WEBP", quality=76, method=6)
