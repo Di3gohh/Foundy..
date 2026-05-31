@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
@@ -154,7 +155,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
     await _ensure_admin(admin_usuario_id)
     supabase = get_supabase()
 
-    usuarios = await (
+    usuarios, itens, itens_arquivados, alertas, alertas_arquivados, moderacao, denuncias_chat, denuncias_posts = await asyncio.gather(
         supabase.table("usuarios")
         .select(
             "id,nome,email,pontos_luz,nivel_perfil,foto_url,ocupacao,tipo_conta,empresa_nome,empresa_descricao,"
@@ -166,9 +167,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         .is_("removido_em", "null")
         .order("criado_em", desc=True)
         .limit(120)
-        .execute()
-    )
-    itens = await (
+        .execute(),
         supabase.table("itens_achados")
         .select(
             "id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,status,criado_em,"
@@ -177,9 +176,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         .neq("status", "arquivado")
         .order("criado_em", desc=True)
         .limit(160)
-        .execute()
-    )
-    itens_arquivados = await (
+        .execute(),
         supabase.table("itens_achados")
         .select(
             "id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,status,criado_em,"
@@ -188,32 +185,24 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         .eq("status", "arquivado")
         .order("atualizado_em", desc=True)
         .limit(160)
-        .execute()
-    )
-    alertas = await (
+        .execute(),
         supabase.table("alertas_perdidos")
         .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em")
         .neq("status", "arquivado")
         .order("criado_em", desc=True)
         .limit(160)
-        .execute()
-    )
-    alertas_arquivados = await (
+        .execute(),
         supabase.table("alertas_perdidos")
         .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em")
         .eq("status", "arquivado")
         .order("atualizado_em", desc=True)
         .limit(160)
-        .execute()
-    )
-    moderacao = await (
+        .execute(),
         supabase.table("moderacao_eventos")
         .select("id,tipo,alvo_tipo,alvo_id,motivo,criado_em,admin_usuario_id")
         .order("criado_em", desc=True)
         .limit(120)
-        .execute()
-    )
-    denuncias_chat = await (
+        .execute(),
         supabase.table("denuncias_extorsao")
         .select(
             "id,sala_chat_id,item_achado_id,usuario_denunciante_id,usuario_denunciado_id,mensagem_chat_id,"
@@ -221,9 +210,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         )
         .order("criado_em", desc=True)
         .limit(160)
-        .execute()
-    )
-    denuncias_posts = await (
+        .execute(),
         supabase.table("denuncias_posts")
         .select(
             "id,item_achado_id,alerta_perdido_id,usuario_denunciante_id,usuario_denunciado_id,motivo_tipo,"
@@ -231,7 +218,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         )
         .order("criado_em", desc=True)
         .limit(160)
-        .execute()
+        .execute(),
     )
 
     users_by_id = {row["id"]: row for row in usuarios.data}
