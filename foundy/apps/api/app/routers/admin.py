@@ -106,16 +106,24 @@ async def _resolver_denuncia(payload: AdminAction, status_denuncia: str, decisao
     }
     if status_denuncia in {"resolvida", "resolvido"}:
         updates["resolvida_em"] = now_iso
-    response = await (
-        get_supabase()
+    supabase = get_supabase()
+    denuncia = await (
+        supabase
+        .table(table)
+        .select("usuario_denunciante_id")
+        .eq("id", str(payload.denuncia_id))
+        .limit(1)
+        .execute()
+    )
+    await (
+        supabase
         .table(table)
         .update(updates)
         .eq("id", str(payload.denuncia_id))
-        .select("usuario_denunciante_id")
         .execute()
     )
-    if response.data:
-        return response.data[0].get("usuario_denunciante_id")
+    if denuncia.data:
+        return denuncia.data[0].get("usuario_denunciante_id")
     return None
 
 
@@ -320,13 +328,19 @@ async def admin_arquivar_item(item_id: UUID, payload: AdminAction) -> dict[str, 
 
     item = await (
         supabase.table("itens_achados")
-        .update({"status": "arquivado", "atualizado_em": now_iso})
-        .eq("id", str(item_id))
         .select("id,usuario_id,titulo")
+        .eq("id", str(item_id))
+        .limit(1)
         .execute()
     )
     if not item.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item não encontrado.")
+    await (
+        supabase.table("itens_achados")
+        .update({"status": "arquivado", "atualizado_em": now_iso})
+        .eq("id", str(item_id))
+        .execute()
+    )
 
     await _registrar_evento("item_arquivado", "item", str(item_id), payload.admin_usuario_id, payload.motivo)
 
@@ -349,13 +363,19 @@ async def admin_desarquivar_item(item_id: UUID, payload: AdminAction) -> dict[st
     supabase = get_supabase()
     item = await (
         supabase.table("itens_achados")
-        .update({"status": "publicado", "atualizado_em": datetime.now(timezone.utc).isoformat()})
-        .eq("id", str(item_id))
         .select("id,usuario_id,titulo")
+        .eq("id", str(item_id))
+        .limit(1)
         .execute()
     )
     if not item.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
+    await (
+        supabase.table("itens_achados")
+        .update({"status": "publicado", "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("id", str(item_id))
+        .execute()
+    )
     await _registrar_evento("item_desarquivado", "item", str(item_id), payload.admin_usuario_id, payload.motivo)
     await _notificar(item.data[0].get("usuario_id"), "Item restaurado", f"Seu item '{item.data[0]['titulo']}' foi desarquivado pela moderacao.")
     return {"mensagem": "Item desarquivado e usuario notificado."}
@@ -386,13 +406,19 @@ async def admin_desarquivar_alerta(alerta_id: UUID, payload: AdminAction) -> dic
     supabase = get_supabase()
     alerta = await (
         supabase.table("alertas_perdidos")
-        .update({"status": "ativo", "atualizado_em": datetime.now(timezone.utc).isoformat()})
-        .eq("id", str(alerta_id))
         .select("id,usuario_id,titulo")
+        .eq("id", str(alerta_id))
+        .limit(1)
         .execute()
     )
     if not alerta.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta nao encontrado.")
+    await (
+        supabase.table("alertas_perdidos")
+        .update({"status": "ativo", "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("id", str(alerta_id))
+        .execute()
+    )
     await _registrar_evento("alerta_desarquivado", "alerta_perdido", str(alerta_id), payload.admin_usuario_id, payload.motivo)
     await _notificar(alerta.data[0].get("usuario_id"), "Alerta restaurado", f"Seu alerta '{alerta.data[0]['titulo']}' foi desarquivado pela moderacao.")
     return {"mensagem": "Alerta desarquivado e usuario notificado."}
@@ -447,15 +473,22 @@ async def admin_banir_usuario(usuario_id: UUID, payload: BanimentoAction) -> dic
         prazo = "permanentemente" if payload.permanente else f"por {payload.dias or 7} dia(s)"
         evento = "usuario_banido"
 
-    response = await (
+    usuario_existente = await (
+        supabase.table("usuarios")
+        .select("id")
+        .eq("id", str(usuario_id))
+        .limit(1)
+        .execute()
+    )
+    if not usuario_existente.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
+
+    await (
         supabase.table("usuarios")
         .update(updates)
         .eq("id", str(usuario_id))
-        .select("id,nome")
         .execute()
     )
-    if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
 
     await _registrar_evento(evento, "usuario", str(usuario_id), payload.admin_usuario_id, payload.motivo)
     if payload.tipo == "conta":
@@ -574,9 +607,10 @@ async def admin_excluir_denuncia(denuncia_id: UUID, payload: ResolverDenunciaAct
     await _ensure_admin(payload.admin_usuario_id)
     supabase = get_supabase()
     table = "denuncias_extorsao" if payload.denuncia_tipo == "chat" else "denuncias_posts"
-    response = await supabase.table(table).delete().eq("id", str(denuncia_id)).select("id").execute()
-    if not response.data:
+    denuncia = await supabase.table(table).select("id").eq("id", str(denuncia_id)).limit(1).execute()
+    if not denuncia.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Denuncia nao encontrada.")
+    await supabase.table(table).delete().eq("id", str(denuncia_id)).execute()
     await _registrar_evento("denuncia_excluida", payload.denuncia_tipo, str(denuncia_id), payload.admin_usuario_id, payload.motivo)
     return {"mensagem": "Dados da denuncia excluidos permanentemente."}
 
@@ -586,7 +620,17 @@ async def admin_avisar_usuario(usuario_id: UUID, payload: AdminAction) -> dict[s
     await _ensure_admin(payload.admin_usuario_id)
     supabase = get_supabase()
     now_iso = datetime.now(timezone.utc).isoformat()
-    response = await (
+    usuario_existente = await (
+        supabase.table("usuarios")
+        .select("id")
+        .eq("id", str(usuario_id))
+        .limit(1)
+        .execute()
+    )
+    if not usuario_existente.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
+
+    await (
         supabase.table("usuarios")
         .update(
             {
@@ -596,11 +640,8 @@ async def admin_avisar_usuario(usuario_id: UUID, payload: AdminAction) -> dict[s
             }
         )
         .eq("id", str(usuario_id))
-        .select("id")
         .execute()
     )
-    if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
     await _registrar_evento("usuario_avisado", "usuario", str(usuario_id), payload.admin_usuario_id, payload.motivo)
     await _notificar(
         str(usuario_id),
@@ -616,7 +657,17 @@ async def admin_avisar_usuario(usuario_id: UUID, payload: AdminAction) -> dict[s
 async def admin_desbanir_usuario(usuario_id: UUID, payload: AdminAction) -> dict[str, str]:
     await _ensure_admin(payload.admin_usuario_id)
     supabase = get_supabase()
-    response = await (
+    usuario_existente = await (
+        supabase.table("usuarios")
+        .select("id")
+        .eq("id", str(usuario_id))
+        .limit(1)
+        .execute()
+    )
+    if not usuario_existente.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
+
+    await (
         supabase.table("usuarios")
         .update(
             {
@@ -631,11 +682,8 @@ async def admin_desbanir_usuario(usuario_id: UUID, payload: AdminAction) -> dict
             }
         )
         .eq("id", str(usuario_id))
-        .select("id")
         .execute()
     )
-    if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
     await _registrar_evento("usuario_desbanido", "usuario", str(usuario_id), payload.admin_usuario_id, payload.motivo)
     await supabase.table("ips_bloqueados").delete().eq("usuario_id", str(usuario_id)).execute()
     await _notificar(str(usuario_id), "Suspensão removida", f"Sua suspensão foi removida. Observação: {payload.motivo.strip()}")

@@ -45,16 +45,21 @@ async def confirmar_devolucao(payload: ConfirmarDevolucao) -> dict[str, object]:
     try:
         item = await (
             supabase.table("itens_achados")
+            .select("id,titulo")
+            .eq("id", str(payload.item_achado_id))
+            .limit(1)
+            .execute()
+        )
+        if not item.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
+        await (
+            supabase.table("itens_achados")
             .update({"status": "devolvido", "devolvido_em": now_iso, "ultimo_movimento_em": now_iso})
             .eq("id", str(payload.item_achado_id))
-            .select("id,titulo")
             .execute()
         )
     except APIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nao foi possivel confirmar a devolucao.") from exc
-
-    if not item.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
 
     await (
         supabase.table("salas_chat")

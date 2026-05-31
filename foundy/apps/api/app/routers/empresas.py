@@ -115,7 +115,6 @@ async def criar_item_catalogo(empresa_id: UUID, payload: EmpresaCatalogoItemCrea
                 "status": "disponivel",
             }
         )
-        .select("id,empresa_usuario_id,titulo,descricao,categoria,subcategoria,codigo_interno,local_armazenamento,imagem_url,status,retirado_por_nome,retirado_em,criado_em,atualizado_em")
         .execute()
     )
     if not response.data:

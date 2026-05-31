@@ -468,11 +468,6 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate, background_tasks: Bac
         response = await (
             supabase.table("itens_achados")
             .insert(item)
-            .select(
-                "id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,raio_mascara_metros,"
-                "imagem_url,status,criado_em,desafio_pergunta,tags_ia,hashtags,"
-                "chat_desbloqueado,premium_ativo,premium_expira_em"
-            )
             .execute()
         )
     except APIError as exc:
@@ -558,7 +553,6 @@ async def reivindicar_item(item_id: UUID, payload: ReivindicacaoCreate) -> dict[
                     "status": "aguardando_validacao",
                 }
             )
-            .select("id,item_achado_id")
             .execute()
         )
     except APIError as exc:
@@ -745,10 +739,6 @@ async def enviar_mensagem_chat(
                 "motivos_moderacao": scan.reasons,
                 "bloqueada_por_desafio": False,
             }
-        )
-        .select(
-            "id,sala_chat_id,item_achado_id,alerta_perdido_id,remetente_usuario_id,destinatario_usuario_id,"
-            "mensagem,status_moderacao,motivos_moderacao,criado_em"
         )
         .execute()
     )
@@ -1102,13 +1092,20 @@ async def atualizar_item_achado(item_id: UUID, payload: ItemAchadoUpdate) -> dic
     updates["atualizado_em"] = datetime.now(timezone.utc).isoformat()
 
     supabase = get_supabase()
+    existing = await (
+        supabase.table("itens_achados")
+        .select("id")
+        .eq("id", str(item_id))
+        .limit(1)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item não encontrado.")
+
     try:
-        response = await supabase.table("itens_achados").update(updates).eq("id", str(item_id)).select("id").execute()
+        await supabase.table("itens_achados").update(updates).eq("id", str(item_id)).execute()
     except APIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível atualizar o item.") from exc
-
-    if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item não encontrado.")
 
     return {"mensagem": "Item atualizado com sucesso."}
 
@@ -1130,18 +1127,14 @@ async def arquivar_item_achado(item_id: UUID, usuario_id: UUID) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Você só pode apagar itens publicados por você.")
 
     try:
-        response = await (
+        await (
             supabase.table("itens_achados")
             .update({"status": "arquivado", "atualizado_em": datetime.now(timezone.utc).isoformat()})
             .eq("id", str(item_id))
-            .select("id")
             .execute()
         )
     except APIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível arquivar o item.") from exc
-
-    if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item não encontrado.")
 
     await (
         supabase.table("salas_chat")

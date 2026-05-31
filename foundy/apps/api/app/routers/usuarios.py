@@ -365,22 +365,41 @@ async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> di
 
     updates["atualizado_em"] = datetime.now(timezone.utc).isoformat()
     supabase = get_supabase()
-    response = await (
+    existente = await (
+        supabase.table("usuarios")
+        .select("id")
+        .eq("id", str(usuario_id))
+        .is_("removido_em", "null")
+        .limit(1)
+        .execute()
+    )
+    if not existente.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
+
+    await (
         supabase.table("usuarios")
         .update(updates)
         .eq("id", str(usuario_id))
         .is_("removido_em", "null")
+        .execute()
+    )
+
+    refreshed = await (
+        supabase.table("usuarios")
         .select(
             "id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,"
             "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
             "banido_ate,banimento_motivo,banido_permanente,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente"
         )
+        .eq("id", str(usuario_id))
+        .is_("removido_em", "null")
+        .limit(1)
         .execute()
     )
-    if not response.data:
+    if not refreshed.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
 
-    result = _session_payload(response.data[0])
+    result = _session_payload(refreshed.data[0])
     result["mensagem"] = "Perfil atualizado com segurança."
     return result
 
@@ -440,7 +459,6 @@ async def criar_hub_verificado(payload: HubVerificadoCreate) -> dict[str, str]:
                 "status_verificacao": "pendente",
             }
         )
-        .select("id")
         .execute()
     )
     if not response.data:

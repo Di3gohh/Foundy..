@@ -182,7 +182,6 @@ async def criar_alerta_perdido(payload: AlertaPerdidoCreate, background_tasks: B
                     "raio_metros": payload.raio_metros,
                 }
             )
-            .select("id")
             .execute()
         )
     except APIError as exc:
@@ -262,7 +261,6 @@ async def abrir_chat_alerta_perdido(alerta_id: UUID, payload: EncontreiAlertaPer
                     "desbloqueado_em": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            .select("id")
             .execute()
         )
         if not criada.data:
@@ -312,29 +310,45 @@ async def listar_notificacoes(usuario_id: UUID, limite: int = Query(default=20, 
 @router.post("/{notificacao_id}/lida")
 async def marcar_lida(notificacao_id: UUID, payload: MarcarNotificacaoLida) -> dict[str, str]:
     supabase = get_supabase()
-    response = await (
+    notificacao = await (
+        supabase.table("notificacoes")
+        .select("id")
+        .eq("id", str(notificacao_id))
+        .eq("usuario_id", str(payload.usuario_id))
+        .limit(1)
+        .execute()
+    )
+    if not notificacao.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notificação não encontrada.")
+
+    await (
         supabase.table("notificacoes")
         .update({"lida_em": datetime.now(timezone.utc).isoformat()})
         .eq("id", str(notificacao_id))
         .eq("usuario_id", str(payload.usuario_id))
-        .select("id")
         .execute()
     )
-    if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notificação não encontrada.")
     return {"mensagem": "Notificação aberta e removida do sininho."}
 
 
 @router.delete("/alertas-perdidos/{alerta_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def arquivar_alerta_perdido(alerta_id: UUID, usuario_id: UUID) -> None:
     supabase = get_supabase()
-    response = await (
+    alerta = await (
+        supabase.table("alertas_perdidos")
+        .select("id")
+        .eq("id", str(alerta_id))
+        .eq("usuario_id", str(usuario_id))
+        .limit(1)
+        .execute()
+    )
+    if not alerta.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta não encontrado ou você não tem permissão.")
+
+    await (
         supabase.table("alertas_perdidos")
         .update({"status": "arquivado", "atualizado_em": datetime.now(timezone.utc).isoformat()})
         .eq("id", str(alerta_id))
         .eq("usuario_id", str(usuario_id))
-        .select("id")
         .execute()
     )
-    if not response.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta não encontrado ou você não tem permissão.")
