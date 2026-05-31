@@ -87,6 +87,22 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
         )
         users_by_id = {row["id"]: row for row in usuarios.data}
 
+    last_messages_by_chat: dict[str, dict] = {}
+    chat_ids = list(chats.keys())
+    if chat_ids:
+        mensagens = await (
+            supabase.table("mensagens_chat")
+            .select("sala_chat_id,mensagem,criado_em,remetente_usuario_id")
+            .in_("sala_chat_id", chat_ids)
+            .order("criado_em", desc=True)
+            .limit(250)
+            .execute()
+        )
+        for mensagem in mensagens.data:
+            sala_id = mensagem.get("sala_chat_id")
+            if sala_id and sala_id not in last_messages_by_chat:
+                last_messages_by_chat[sala_id] = mensagem
+
     summaries: list[dict] = []
     for row in chats.values():
         other_user_id = (
@@ -95,14 +111,7 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
             else row.get("encontrador_usuario_id")
         )
         other_user = users_by_id.get(other_user_id or "", {})
-        last_message = await (
-            supabase.table("mensagens_chat")
-            .select("mensagem,criado_em,remetente_usuario_id")
-            .eq("sala_chat_id", row["id"])
-            .order("criado_em", desc=True)
-            .limit(1)
-            .execute()
-        )
+        last_message = last_messages_by_chat.get(row["id"])
         summaries.append(
             {
                 "id": row["id"],
@@ -114,9 +123,9 @@ async def _listar_chats(usuario_id: UUID) -> list[dict]:
                 "status": row["status"],
                 "criado_em": row["criado_em"],
                 "atualizado_em": row["atualizado_em"],
-                "ultima_mensagem": last_message.data[0]["mensagem"] if last_message.data else None,
-                "ultima_mensagem_em": last_message.data[0]["criado_em"] if last_message.data else None,
-                "ultimo_remetente_id": last_message.data[0]["remetente_usuario_id"] if last_message.data else None,
+                "ultima_mensagem": last_message["mensagem"] if last_message else None,
+                "ultima_mensagem_em": last_message["criado_em"] if last_message else None,
+                "ultimo_remetente_id": last_message["remetente_usuario_id"] if last_message else None,
                 "outro_usuario_id": other_user_id,
                 "outro_usuario_nome": other_user.get("nome"),
                 "outro_usuario_foto_url": other_user.get("foto_url"),
@@ -190,6 +199,7 @@ async def painel_usuario(usuario_id: UUID) -> dict:
         supabase.table("notificacoes")
         .select("id,tipo,titulo,mensagem,lida_em,criado_em,item_achado_id,alerta_perdido_id,sala_chat_id,reivindicacao_id")
         .eq("usuario_id", str(usuario_id))
+        .is_("lida_em", "null")
         .order("criado_em", desc=True)
         .limit(50)
         .execute()

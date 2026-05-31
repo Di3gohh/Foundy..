@@ -130,6 +130,17 @@ def _attach_user(row: dict, users_by_id: dict[str, dict], prefix: str, user_id: 
     }
 
 
+def _compact_admin_media(row: dict) -> dict:
+    image_url = row.get("imagem_url")
+    if isinstance(image_url, str) and image_url.startswith("data:image/") and len(image_url) > 300_000:
+        return {
+            **row,
+            "imagem_url": None,
+            "imagem_observacao": "Imagem antiga em base64 omitida do painel para evitar travamento. Novas fotos devem usar Storage.",
+        }
+    return row
+
+
 @router.get("/painel")
 async def painel_admin(admin_usuario_id: UUID) -> dict:
     await _ensure_admin(admin_usuario_id)
@@ -146,7 +157,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         )
         .is_("removido_em", "null")
         .order("criado_em", desc=True)
-        .limit(300)
+        .limit(120)
         .execute()
     )
     itens = await (
@@ -155,22 +166,43 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
             "id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,status,criado_em,"
             "atualizado_em,desafio_pergunta,raio_mascara_metros,premium_ativo,premium_expira_em"
         )
+        .neq("status", "arquivado")
         .order("criado_em", desc=True)
-        .limit(300)
+        .limit(160)
+        .execute()
+    )
+    itens_arquivados = await (
+        supabase.table("itens_achados")
+        .select(
+            "id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,status,criado_em,"
+            "atualizado_em,desafio_pergunta,raio_mascara_metros,premium_ativo,premium_expira_em"
+        )
+        .eq("status", "arquivado")
+        .order("atualizado_em", desc=True)
+        .limit(160)
         .execute()
     )
     alertas = await (
         supabase.table("alertas_perdidos")
         .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em")
+        .neq("status", "arquivado")
         .order("criado_em", desc=True)
-        .limit(300)
+        .limit(160)
+        .execute()
+    )
+    alertas_arquivados = await (
+        supabase.table("alertas_perdidos")
+        .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em")
+        .eq("status", "arquivado")
+        .order("atualizado_em", desc=True)
+        .limit(160)
         .execute()
     )
     moderacao = await (
         supabase.table("moderacao_eventos")
         .select("id,tipo,alvo_tipo,alvo_id,motivo,criado_em,admin_usuario_id")
         .order("criado_em", desc=True)
-        .limit(200)
+        .limit(120)
         .execute()
     )
     denuncias_chat = await (
@@ -180,7 +212,7 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
             "motivo,prova_descricao,prova_arquivo_nome,status,decisao_admin,criado_em,decidido_em,resolvida_em"
         )
         .order("criado_em", desc=True)
-        .limit(200)
+        .limit(160)
         .execute()
     )
     denuncias_posts = await (
@@ -190,17 +222,22 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
             "motivo,status,decisao_admin,criado_em,decidido_em,resolvida_em"
         )
         .order("criado_em", desc=True)
-        .limit(200)
+        .limit(160)
         .execute()
     )
 
     users_by_id = {row["id"]: row for row in usuarios.data}
     itens_by_user: dict[str, list[dict]] = {}
-    for item in itens.data:
+    itens_data = [_compact_admin_media(item) for item in itens.data]
+    itens_arquivados_data = [_compact_admin_media(item) for item in itens_arquivados.data]
+    alertas_data = [_compact_admin_media(alerta) for alerta in alertas.data]
+    alertas_arquivados_data = [_compact_admin_media(alerta) for alerta in alertas_arquivados.data]
+
+    for item in [*itens_data, *itens_arquivados_data]:
         itens_by_user.setdefault(item.get("usuario_id") or "", []).append(item)
 
     alertas_by_user: dict[str, list[dict]] = {}
-    for alerta in alertas.data:
+    for alerta in [*alertas_data, *alertas_arquivados_data]:
         alertas_by_user.setdefault(alerta.get("usuario_id") or "", []).append(alerta)
 
     usuarios_enriquecidos = []
@@ -212,16 +249,26 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
                 **usuario,
                 "total_itens_postados": len(user_items),
                 "total_alertas_perdidos": len(user_alerts),
-                "itens_postados": user_items[:20],
-                "alertas_perdidos": user_alerts[:20],
+                "itens_postados": [
+                    {key: item.get(key) for key in ("id", "titulo", "categoria", "subcategoria", "status", "criado_em", "atualizado_em")}
+                    for item in user_items[:12]
+                ],
+                "alertas_perdidos": [
+                    {key: alerta.get(key) for key in ("id", "titulo", "categoria", "subcategoria", "status", "criado_em", "atualizado_em")}
+                    for alerta in user_alerts[:12]
+                ],
                 "banimento_ativo": _is_active_ban(usuario),
             }
         )
 
-    item_titles = {row["id"]: row.get("titulo") for row in itens.data}
-    alerta_titles = {row["id"]: row.get("titulo") for row in alertas.data}
-    itens_enriquecidos = [_attach_user(item, users_by_id, "usuario", item.get("usuario_id")) for item in itens.data]
-    alertas_enriquecidos = [_attach_user(alerta, users_by_id, "usuario", alerta.get("usuario_id")) for alerta in alertas.data]
+    all_item_rows = [*itens_data, *itens_arquivados_data]
+    all_alert_rows = [*alertas_data, *alertas_arquivados_data]
+    item_titles = {row["id"]: row.get("titulo") for row in all_item_rows}
+    alerta_titles = {row["id"]: row.get("titulo") for row in all_alert_rows}
+    itens_enriquecidos = [_attach_user(item, users_by_id, "usuario", item.get("usuario_id")) for item in itens_data]
+    itens_arquivados_enriquecidos = [_attach_user(item, users_by_id, "usuario", item.get("usuario_id")) for item in itens_arquivados_data]
+    alertas_enriquecidos = [_attach_user(alerta, users_by_id, "usuario", alerta.get("usuario_id")) for alerta in alertas_data]
+    alertas_arquivados_enriquecidos = [_attach_user(alerta, users_by_id, "usuario", alerta.get("usuario_id")) for alerta in alertas_arquivados_data]
 
     denuncias_chat_enriquecidas = []
     for denuncia in denuncias_chat.data:
@@ -238,14 +285,29 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         row["alerta_titulo"] = alerta_titles.get(denuncia.get("alerta_perdido_id"))
         denuncias_posts_enriquecidas.append(row)
 
+    def is_denuncia_resolvida(row: dict) -> bool:
+        return bool(row.get("resolvida_em") or row.get("status") in {"resolvida", "resolvido", "descartada", "rejeitado", "avisado", "banido"})
+
+    denuncias_abertas = [row for row in denuncias_chat_enriquecidas if not is_denuncia_resolvida(row)]
+    denuncias_posts_abertas = [row for row in denuncias_posts_enriquecidas if not is_denuncia_resolvida(row)]
+    denuncias_resolvidas = [
+        *[{**row, "origem_denuncia": "chat"} for row in denuncias_chat_enriquecidas if is_denuncia_resolvida(row)],
+        *[{**row, "origem_denuncia": "post"} for row in denuncias_posts_enriquecidas if is_denuncia_resolvida(row)],
+    ]
+
     return {
         "usuarios": [row for row in usuarios_enriquecidos if row.get("tipo_conta") != "empresa"],
         "empresas": [row for row in usuarios_enriquecidos if row.get("tipo_conta") == "empresa"],
         "itens": itens_enriquecidos,
         "alertas_perdidos": alertas_enriquecidos,
+        "itens_arquivados": [
+            *itens_arquivados_enriquecidos,
+            *[{**alerta, "tipo_registro": "alerta_perdido"} for alerta in alertas_arquivados_enriquecidos],
+        ],
         "moderacao": moderacao.data,
-        "denuncias": denuncias_chat_enriquecidas,
-        "denuncias_posts": denuncias_posts_enriquecidas,
+        "denuncias": denuncias_abertas,
+        "denuncias_posts": denuncias_posts_abertas,
+        "denuncias_resolvidas": sorted(denuncias_resolvidas, key=lambda row: str(row.get("decidido_em") or row.get("resolvida_em") or row.get("criado_em") or ""), reverse=True),
         "banidos": [row for row in usuarios_enriquecidos if row.get("banimento_ativo")],
     }
 
@@ -279,6 +341,80 @@ async def admin_arquivar_item(item_id: UUID, payload: AdminAction) -> dict[str, 
     await _notificar(denunciante_id, "Sua denúncia foi analisada", "A moderação revisou sua denúncia e arquivou o post.")
 
     return {"mensagem": "Item arquivado e usuário notificado."}
+
+
+@router.post("/itens/{item_id}/desarquivar")
+async def admin_desarquivar_item(item_id: UUID, payload: AdminAction) -> dict[str, str]:
+    await _ensure_admin(payload.admin_usuario_id)
+    supabase = get_supabase()
+    item = await (
+        supabase.table("itens_achados")
+        .update({"status": "publicado", "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("id", str(item_id))
+        .select("id,usuario_id,titulo")
+        .execute()
+    )
+    if not item.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
+    await _registrar_evento("item_desarquivado", "item", str(item_id), payload.admin_usuario_id, payload.motivo)
+    await _notificar(item.data[0].get("usuario_id"), "Item restaurado", f"Seu item '{item.data[0]['titulo']}' foi desarquivado pela moderacao.")
+    return {"mensagem": "Item desarquivado e usuario notificado."}
+
+
+@router.post("/itens/{item_id}/excluir-permanente")
+async def admin_excluir_item_permanente(item_id: UUID, payload: AdminAction) -> dict[str, str]:
+    await _ensure_admin(payload.admin_usuario_id)
+    supabase = get_supabase()
+    item = await (
+        supabase.table("itens_achados")
+        .select("id,usuario_id,titulo")
+        .eq("id", str(item_id))
+        .limit(1)
+        .execute()
+    )
+    if not item.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item nao encontrado.")
+    await _registrar_evento("item_excluido_permanente", "item", str(item_id), payload.admin_usuario_id, payload.motivo)
+    await _notificar(item.data[0].get("usuario_id"), "Item excluido permanentemente", f"O registro '{item.data[0]['titulo']}' foi excluido pela moderacao. Motivo: {payload.motivo.strip()}")
+    await supabase.table("itens_achados").delete().eq("id", str(item_id)).execute()
+    return {"mensagem": "Item excluido permanentemente."}
+
+
+@router.post("/alertas-perdidos/{alerta_id}/desarquivar")
+async def admin_desarquivar_alerta(alerta_id: UUID, payload: AdminAction) -> dict[str, str]:
+    await _ensure_admin(payload.admin_usuario_id)
+    supabase = get_supabase()
+    alerta = await (
+        supabase.table("alertas_perdidos")
+        .update({"status": "ativo", "atualizado_em": datetime.now(timezone.utc).isoformat()})
+        .eq("id", str(alerta_id))
+        .select("id,usuario_id,titulo")
+        .execute()
+    )
+    if not alerta.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta nao encontrado.")
+    await _registrar_evento("alerta_desarquivado", "alerta_perdido", str(alerta_id), payload.admin_usuario_id, payload.motivo)
+    await _notificar(alerta.data[0].get("usuario_id"), "Alerta restaurado", f"Seu alerta '{alerta.data[0]['titulo']}' foi desarquivado pela moderacao.")
+    return {"mensagem": "Alerta desarquivado e usuario notificado."}
+
+
+@router.post("/alertas-perdidos/{alerta_id}/excluir-permanente")
+async def admin_excluir_alerta_permanente(alerta_id: UUID, payload: AdminAction) -> dict[str, str]:
+    await _ensure_admin(payload.admin_usuario_id)
+    supabase = get_supabase()
+    alerta = await (
+        supabase.table("alertas_perdidos")
+        .select("id,usuario_id,titulo")
+        .eq("id", str(alerta_id))
+        .limit(1)
+        .execute()
+    )
+    if not alerta.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta nao encontrado.")
+    await _registrar_evento("alerta_excluido_permanente", "alerta_perdido", str(alerta_id), payload.admin_usuario_id, payload.motivo)
+    await _notificar(alerta.data[0].get("usuario_id"), "Alerta excluido permanentemente", f"O alerta '{alerta.data[0]['titulo']}' foi excluido pela moderacao. Motivo: {payload.motivo.strip()}")
+    await supabase.table("alertas_perdidos").delete().eq("id", str(alerta_id)).execute()
+    return {"mensagem": "Alerta excluido permanentemente."}
 
 
 @router.post("/usuarios/{usuario_id}/banir")
@@ -375,6 +511,74 @@ async def admin_resolver_denuncia(denuncia_id: UUID, payload: ResolverDenunciaAc
         f"A moderação concluiu a análise. Decisão: {payload.motivo.strip()}",
     )
     return {"mensagem": "Denúncia marcada como resolvida e denunciante notificado."}
+
+
+@router.post("/denuncias/{denuncia_id}/desfazer")
+async def admin_desfazer_moderacao_denuncia(denuncia_id: UUID, payload: ResolverDenunciaAction) -> dict[str, str]:
+    await _ensure_admin(payload.admin_usuario_id)
+    supabase = get_supabase()
+    table = "denuncias_extorsao" if payload.denuncia_tipo == "chat" else "denuncias_posts"
+    denuncia = await (
+        supabase.table(table)
+        .select("id,usuario_denunciante_id,usuario_denunciado_id")
+        .eq("id", str(denuncia_id))
+        .limit(1)
+        .execute()
+    )
+    if not denuncia.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Denuncia nao encontrada.")
+    row = denuncia.data[0]
+    usuario_denunciado = row.get("usuario_denunciado_id")
+    if usuario_denunciado:
+        await (
+            supabase.table("usuarios")
+            .update(
+                {
+                    "banido_ate": None,
+                    "banido_permanente": False,
+                    "banimento_motivo": None,
+                    "chat_banido_ate": None,
+                    "chat_banido_permanente": False,
+                    "chat_banimento_motivo": None,
+                    "banimento_tipo": None,
+                    "atualizado_em": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("id", usuario_denunciado)
+            .execute()
+        )
+        await supabase.table("ips_bloqueados").delete().eq("usuario_id", usuario_denunciado).execute()
+        await _notificar(usuario_denunciado, "Medida de moderacao desfeita", f"A moderacao removeu a medida vinculada a uma denuncia. Observacao: {payload.motivo.strip()}")
+
+    await (
+        supabase.table(table)
+        .update(
+            {
+                "status": "pendente",
+                "decisao_admin": f"Acao desfeita: {payload.motivo.strip()}",
+                "decidido_em": datetime.now(timezone.utc).isoformat(),
+                "resolvida_em": None,
+                "admin_usuario_id": str(payload.admin_usuario_id),
+            }
+        )
+        .eq("id", str(denuncia_id))
+        .execute()
+    )
+    await _registrar_evento("moderacao_desfeita", payload.denuncia_tipo, str(denuncia_id), payload.admin_usuario_id, payload.motivo)
+    await _notificar(row.get("usuario_denunciante_id"), "Denuncia reaberta", "Uma decisao de moderacao foi desfeita e a denuncia voltou para revisao.")
+    return {"mensagem": "Acao de moderacao desfeita e denuncia reaberta."}
+
+
+@router.post("/denuncias/{denuncia_id}/excluir")
+async def admin_excluir_denuncia(denuncia_id: UUID, payload: ResolverDenunciaAction) -> dict[str, str]:
+    await _ensure_admin(payload.admin_usuario_id)
+    supabase = get_supabase()
+    table = "denuncias_extorsao" if payload.denuncia_tipo == "chat" else "denuncias_posts"
+    response = await supabase.table(table).delete().eq("id", str(denuncia_id)).select("id").execute()
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Denuncia nao encontrada.")
+    await _registrar_evento("denuncia_excluida", payload.denuncia_tipo, str(denuncia_id), payload.admin_usuario_id, payload.motivo)
+    return {"mensagem": "Dados da denuncia excluidos permanentemente."}
 
 
 @router.post("/usuarios/{usuario_id}/avisar")

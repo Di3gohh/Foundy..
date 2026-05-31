@@ -6,13 +6,14 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from postgrest.exceptions import APIError
 
-from app.core.filters import censor_sensitive_text, scan_item_text
+from app.core.filters import censor_sensitive_text, normalize_text, scan_item_text
 from app.core.geo import mask_coordinates
 from app.core.geo import validate_coordinates
 from app.db.supabase_client import get_supabase
 from app.services.email_service import send_notification_email
 from app.services.moderation_service import aplicar_moderacao_progressiva
-from app.services.storage_service import store_public_image_if_needed
+from app.services.ai_processing import blur_faces_and_sensitive_regions
+from app.services.storage_service import image_bytes_to_data_url, parse_image_data_url, store_public_image_if_needed
 
 
 router = APIRouter()
@@ -47,6 +48,46 @@ class EncontreiAlertaPerdido(BaseModel):
 
 def _wkt_point(longitude: float, latitude: float) -> str:
     return f"POINT({longitude} {latitude})"
+
+
+DOCUMENT_PRIVACY_HINTS = (
+    "rg",
+    "cpf",
+    "cnh",
+    "documento",
+    "identidade",
+    "certidao",
+    "passaporte",
+    "titulo de eleitor",
+    "carteira de trabalho",
+    "cartao do sus",
+    "documento pessoal",
+)
+
+
+def _requires_document_privacy(categoria: str | None, subcategoria: str | None, *texts: str) -> bool:
+    if categoria == "documentos" or subcategoria == "documentos":
+        return True
+    searchable = normalize_text(" ".join(texts))
+    return any(normalize_text(hint) in searchable for hint in DOCUMENT_PRIVACY_HINTS)
+
+
+async def _prepare_public_image(
+    imagem_url: str | None,
+    *,
+    folder: str,
+    document_privacy: bool,
+    privacy_hint_text: str,
+) -> str | None:
+    if not imagem_url:
+        return None
+    if document_privacy:
+        parsed = parse_image_data_url(imagem_url)
+        if parsed is None:
+            return None
+        processed, _tags, _reasons = blur_faces_and_sensitive_regions(parsed.content, privacy_hint_text)
+        imagem_url = image_bytes_to_data_url(processed)
+    return await store_public_image_if_needed(imagem_url, folder)
 
 
 async def _buscar_usuario_verificado(usuario_id: UUID) -> dict:
@@ -98,13 +139,18 @@ async def criar_alerta_perdido(payload: AlertaPerdidoCreate, background_tasks: B
     supabase = get_supabase()
     titulo = payload.titulo.strip()
     descricao = payload.descricao.strip()
-    imagem_publica = None if payload.categoria == "documentos" else payload.imagem_url
-    if imagem_publica:
-        try:
-            imagem_publica = await store_public_image_if_needed(imagem_publica, f"perdas/{payload.usuario_id}")
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    if payload.categoria == "documentos":
+    privacy_hint_text = " ".join([titulo, descricao, payload.subcategoria or "", " ".join(payload.hashtags)])
+    document_privacy = _requires_document_privacy(payload.categoria, payload.subcategoria, privacy_hint_text)
+    try:
+        imagem_publica = await _prepare_public_image(
+            payload.imagem_url,
+            folder=f"perdas/{payload.usuario_id}",
+            document_privacy=document_privacy,
+            privacy_hint_text=privacy_hint_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if document_privacy:
         titulo = censor_sensitive_text(titulo)
         descricao = censor_sensitive_text(descricao)
     scan = scan_item_text(titulo, descricao)
@@ -255,6 +301,7 @@ async def listar_notificacoes(usuario_id: UUID, limite: int = Query(default=20, 
         supabase.table("notificacoes")
         .select("id,tipo,titulo,mensagem,lida_em,criado_em,item_achado_id,alerta_perdido_id,sala_chat_id,reivindicacao_id")
         .eq("usuario_id", str(usuario_id))
+        .is_("lida_em", "null")
         .order("criado_em", desc=True)
         .limit(limite)
         .execute()
@@ -267,7 +314,7 @@ async def marcar_lida(notificacao_id: UUID, payload: MarcarNotificacaoLida) -> d
     supabase = get_supabase()
     response = await (
         supabase.table("notificacoes")
-        .delete()
+        .update({"lida_em": datetime.now(timezone.utc).isoformat()})
         .eq("id", str(notificacao_id))
         .eq("usuario_id", str(payload.usuario_id))
         .select("id")

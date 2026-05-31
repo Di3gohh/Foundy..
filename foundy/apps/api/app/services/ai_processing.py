@@ -23,6 +23,22 @@ TAG_PATTERNS: dict[str, tuple[str, ...]] = {
     "#PetEncontrado": ("pet", "cachorro", "gato", "coleira"),
 }
 
+DOCUMENT_HINTS = (
+    "rg",
+    "cpf",
+    "cnh",
+    "documento",
+    "identidade",
+    "certidao",
+    "passaporte",
+    "titulo de eleitor",
+    "carteira de trabalho",
+    "comprovante",
+    "boletim",
+    "cartao do sus",
+    "documento pessoal",
+)
+
 
 def _normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
@@ -79,8 +95,9 @@ def blur_faces_and_sensitive_regions(image_bytes: bytes, extracted_text: str = "
     reasons: list[str] = []
     generated_tags = generate_hashtag_descriptors(extracted_text)
     normalized_hint = _normalize_text(extracted_text)
+    document_hint = any(_normalize_text(hint) in normalized_hint for hint in DOCUMENT_HINTS)
 
-    if CPF_RE.search(extracted_text) or RG_RE.search(extracted_text):
+    if CPF_RE.search(extracted_text) or RG_RE.search(extracted_text) or document_hint:
         width, height = image.size
         document_region = image.crop((0, int(height * 0.25), width, int(height * 0.72))).filter(
             ImageFilter.GaussianBlur(radius=24)

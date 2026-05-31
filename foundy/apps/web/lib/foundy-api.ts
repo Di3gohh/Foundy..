@@ -256,7 +256,7 @@ export async function cadastrarItemAchado(payload: {
   longitude: number
   local_descricao?: string
   desafio_pergunta: string
-  detalhe_oculto: string
+  detalhe_oculto?: string | null
   imagem_url?: string | null
   tags_ia?: string[]
   usuario_id: string
@@ -607,6 +607,8 @@ export async function buscarPainelAdmin(usuarioId: string) {
     moderacao: unknown[]
     denuncias?: unknown[]
     denuncias_posts?: unknown[]
+    denuncias_resolvidas?: unknown[]
+    itens_arquivados?: unknown[]
     banidos?: unknown[]
   }>(
     `/admin/painel?${query.toString()}`,
@@ -624,6 +626,32 @@ export async function adminArquivarItem(adminUsuarioId: string, itemId: string, 
       body: JSON.stringify({ admin_usuario_id: adminUsuarioId, motivo }),
     },
     'Não foi possível arquivar o item.',
+  )
+}
+
+export async function adminDesarquivarItem(adminUsuarioId: string, itemId: string, motivo: string, tipo: 'item' | 'alerta' = 'item') {
+  const path = tipo === 'alerta' ? `/admin/alertas-perdidos/${itemId}/desarquivar` : `/admin/itens/${itemId}/desarquivar`
+  return requestJson<{ mensagem: string }>(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, motivo }),
+    },
+    'Não foi possível desarquivar o registro.',
+  )
+}
+
+export async function adminExcluirRegistroPermanente(adminUsuarioId: string, itemId: string, motivo: string, tipo: 'item' | 'alerta' = 'item') {
+  const path = tipo === 'alerta' ? `/admin/alertas-perdidos/${itemId}/excluir-permanente` : `/admin/itens/${itemId}/excluir-permanente`
+  return requestJson<{ mensagem: string }>(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, motivo }),
+    },
+    'Não foi possível excluir permanentemente o registro.',
   )
 }
 
@@ -688,6 +716,30 @@ export async function adminResolverDenuncia(adminUsuarioId: string, denunciaId: 
       body: JSON.stringify({ admin_usuario_id: adminUsuarioId, denuncia_tipo: denunciaTipo, motivo }),
     },
     'Não foi possível marcar a denúncia como resolvida.',
+  )
+}
+
+export async function adminDesfazerModeracaoDenuncia(adminUsuarioId: string, denunciaId: string, denunciaTipo: 'chat' | 'post', motivo: string) {
+  return requestJson<{ mensagem: string }>(
+    `/admin/denuncias/${denunciaId}/desfazer`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, denuncia_tipo: denunciaTipo, motivo }),
+    },
+    'Não foi possível desfazer a ação de moderação.',
+  )
+}
+
+export async function adminExcluirDenuncia(adminUsuarioId: string, denunciaId: string, denunciaTipo: 'chat' | 'post', motivo: string) {
+  return requestJson<{ mensagem: string }>(
+    `/admin/denuncias/${denunciaId}/excluir`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, denuncia_tipo: denunciaTipo, motivo }),
+    },
+    'Não foi possível excluir os dados da denúncia.',
   )
 }
 

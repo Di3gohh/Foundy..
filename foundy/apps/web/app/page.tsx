@@ -82,6 +82,10 @@ import {
   adminAplicarMedidaUsuario,
   adminAvisarUsuario,
   adminDesbanirUsuario,
+  adminDesarquivarItem,
+  adminDesfazerModeracaoDenuncia,
+  adminExcluirDenuncia,
+  adminExcluirRegistroPermanente,
   adminResolverDenuncia,
   marcarItemCatalogoRetirado,
 } from '@/lib/foundy-api'
@@ -149,9 +153,11 @@ type AdminData = {
   empresas?: unknown[]
   itens: ItemAchado[]
   alertas_perdidos?: unknown[]
+  itens_arquivados?: unknown[]
   moderacao: unknown[]
   denuncias?: unknown[]
   denuncias_posts?: unknown[]
+  denuncias_resolvidas?: unknown[]
   banidos?: unknown[]
 }
 
@@ -192,7 +198,7 @@ const filtrosFoundy: Record<ItemFilter, { label: string; description: string; Ic
   fones: { label: 'Fones', description: 'Fones Bluetooth, headsets e cases.', Icon: Headphones, categoria: 'eletronicos', keywords: ['fone', 'airpods', 'headset', 'earbud', 'case'] },
   notebooks: { label: 'Notebooks', description: 'Computadores, tablets e acessórios.', Icon: Laptop, categoria: 'eletronicos', keywords: ['notebook', 'tablet', 'ipad', 'laptop', 'computador'] },
   documentos: { label: 'Documentos', description: 'RG, CPF, crachás e cartões protegidos.', Icon: FileText, categoria: 'documentos', keywords: ['documento', 'rg', 'cpf', 'cnh', 'cracha', 'cartao'] },
-  carteiras: { label: 'Carteiras', description: 'Carteiras, porta-cartões e bolsas pequenas.', Icon: Wallet, categoria: 'documentos', keywords: ['carteira', 'wallet', 'porta cartao', 'porta-cartao'] },
+  carteiras: { label: 'Carteiras', description: 'Carteiras, porta-cartões e bolsas pequenas.', Icon: Wallet, categoria: 'outros', keywords: ['carteira', 'wallet', 'porta cartao', 'porta-cartao'] },
   mochilas: { label: 'Mochilas', description: 'Bolsas, malas, estojos e sacolas.', Icon: Building2, categoria: 'vestuario', keywords: ['mochila', 'bolsa', 'mala', 'estojo', 'sacola'] },
   roupas: { label: 'Roupas', description: 'Casacos, bonés, uniformes e acessórios.', Icon: Shirt, categoria: 'vestuario', keywords: ['casaco', 'jaqueta', 'bone', 'boné', 'camiseta', 'uniforme', 'roupa'] },
   pets: { label: 'Pets', description: 'Animais, coleiras e itens de pets.', Icon: PawPrint, categoria: 'outros', keywords: ['pet', 'cachorro', 'gato', 'coleira', 'animal'] },
@@ -300,6 +306,21 @@ function isAdmin(session: FoundySession | null) {
 
 function categoriaFromFiltro(filtro: ItemFilter): ItemCategory {
   return filtrosFoundy[filtro].categoria ?? 'outros'
+}
+
+const documentPrivacyHints = ['rg', 'cpf', 'cnh', 'documento', 'identidade', 'passaporte', 'certidão', 'certidao', 'carteira de trabalho', 'cartão do sus', 'cartao do sus']
+
+function normalizeFoundyText(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
+function isDocumentSensitiveFilter(filtro: ItemFilter) {
+  return filtro === 'documentos'
+}
+
+function hasDocumentPrivacyHint(...values: string[]) {
+  const text = normalizeFoundyText(values.join(' '))
+  return documentPrivacyHints.some((hint) => text.includes(normalizeFoundyText(hint)))
 }
 
 function isFutureDate(value?: string) {
@@ -452,7 +473,7 @@ export default function Home() {
       try {
         const dados = await listarMensagensChat(salaChatId, usuarioId)
         if (!active) return
-        setMensagensChat((atuais) => (dados.length > 0 ? mergeChatMessages(atuais, dados) : atuais))
+        setMensagensChat((atuais) => (showLoading ? dados : mergeChatMessages(atuais, dados)))
         setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
       } catch (error) {
         setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível carregar o chat seguro.')
@@ -493,7 +514,7 @@ export default function Home() {
             { event: 'INSERT', schema: 'public', table: 'mensagens_chat', filter: `sala_chat_id=eq.${salaChatId}` },
             () => {
               void listarMensagensChat(salaChatId, usuarioId).then((dados) => {
-                setMensagensChat((atuais) => (dados.length > 0 ? mergeChatMessages(atuais, dados) : atuais))
+                setMensagensChat(dados)
                 setDenunciaDisponivel(dados.some((item) => item.denunciar_extorsao_visivel))
               })
               void carregarPainel(sessao)
@@ -667,6 +688,7 @@ export default function Home() {
       const resultado = await abrirChatParaAlertaPerdido(alerta.id, sessao.usuario_id)
       setSalaChatId(resultado.sala_chat_id)
       setChatAtual(null)
+      setItemSelecionado(null)
       setMensagensChat([])
       setChatFeedback(resultado.mensagem)
       setModalAtivo('chat')
@@ -732,6 +754,9 @@ export default function Home() {
       if (resultado.chat_desbloqueado && resultado.sala_chat_id) {
         setSalaChatId(resultado.sala_chat_id)
         setChatAtual(painel?.chats.find((chat) => chat.id === resultado.sala_chat_id) ?? null)
+        setMensagensChat([])
+        setMensagemChatAtual('')
+        setDenunciaDisponivel(false)
         setChatFeedback('Resposta aprovada. A conversa segura foi liberada para vocês dois.')
         setModalAtivo('chat')
       } else {
@@ -746,9 +771,12 @@ export default function Home() {
   async function abrirChat(chat: ChatSummary) {
     setSalaChatId(chat.id)
     setChatAtual(chat)
+    setMensagensChat([])
+    setMensagemChatAtual('')
+    setDenunciaDisponivel(false)
     setChatFeedback(chat.status === 'encerrado' ? 'Esta conversa foi resolvida e ficou salva no histórico.' : '')
     const item = chat.item_achado_id ? itens.find((found) => found.id === chat.item_achado_id) : null
-    if (item) setItemSelecionado(item)
+    setItemSelecionado(item ?? null)
     setModalAtivo('chat')
   }
 
@@ -774,7 +802,7 @@ export default function Home() {
       setChatFeedback('Mensagem enviada e registrada na conversa.')
       setDenunciaDisponivel((atual) => atual || enviada.denunciar_extorsao_visivel)
       void listarMensagensChat(salaChatId, sessao.usuario_id)
-        .then((dados) => setMensagensChat((atuais) => (dados.length > 0 ? mergeChatMessages(atuais, dados) : atuais)))
+        .then((dados) => setMensagensChat(dados))
         .catch(() => undefined)
       void carregarPainel(sessao)
     } catch (error) {
@@ -785,9 +813,16 @@ export default function Home() {
   async function clicarNotificacao(notificacao: NotificationItem) {
     if (!sessao) return
     setNotificacoes((atuais) => atuais.filter((item) => item.id !== notificacao.id))
-    void marcarNotificacaoLida(notificacao.id, sessao.usuario_id).then(() => carregarPainel(sessao)).catch(() => undefined)
+    try {
+      await marcarNotificacaoLida(notificacao.id, sessao.usuario_id)
+    } catch {
+      setNotificacoes((atuais) => atuais.filter((item) => item.id !== notificacao.id))
+    }
     if (notificacao.sala_chat_id) {
       setSalaChatId(notificacao.sala_chat_id)
+      setMensagensChat([])
+      setMensagemChatAtual('')
+      setDenunciaDisponivel(false)
       let chat = painel?.chats.find((item) => item.id === notificacao.sala_chat_id) ?? null
       if (!chat) {
         const dados = await buscarPainelUsuario(sessao.usuario_id)
@@ -796,6 +831,8 @@ export default function Home() {
         chat = dados.chats.find((item) => item.id === notificacao.sala_chat_id) ?? null
       }
       setChatAtual(chat)
+      const itemDoChat = chat?.item_achado_id ? itens.find((found) => found.id === chat.item_achado_id) : null
+      setItemSelecionado(itemDoChat ?? null)
       setModalAtivo('chat')
       return
     }
@@ -822,6 +859,7 @@ export default function Home() {
       if (alerta) selecionarPerdaNoMapa(alerta)
       setModalAtivo(null)
     }
+    void carregarPainel(sessao)
   }
 
   async function abrirEmpresa(empresa: EmpresaFoundy) {
@@ -1561,7 +1599,7 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
   function selecionarImagem(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
-    if (categoriaAtual === 'documentos') {
+    if (isDocumentSensitiveFilter(categoriaCatalogo)) {
       setImagemUrl('')
       setMensagem('Documento selecionado: a foto não será publicada no catálogo.')
       return
@@ -1582,7 +1620,7 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
         subcategoria: categoriaCatalogo,
         codigo_interno: codigo,
         local_armazenamento: local,
-        imagem_url: categoriaAtual === 'documentos' ? null : imagemUrl || null,
+        imagem_url: isDocumentSensitiveFilter(categoriaCatalogo) ? null : imagemUrl || null,
       })
       setTitulo('')
       setDescricao('')
@@ -1633,7 +1671,7 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
       <div className="foundy-hero-panel rounded-3xl border border-foundy-border bg-foundy-surface p-5">
         <p className="foundy-eyebrow text-sm font-semibold text-foundy-green">Painel empresarial</p>
         <h1 className="mt-2 text-3xl font-black">{sessao.empresa_nome || sessao.nome}</h1>
-        <p className="mt-2 text-sm leading-6 text-foundy-muted">Catálogo interno para achados e perdidos. Sem chat, sem desafio oculto e sem geolocalização.</p>
+        <p className="mt-2 text-sm leading-6 text-foundy-muted">Catálogo interno para achados e perdidos. Sem chat, sem desafio do dono e sem geolocalização.</p>
       </div>
       <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -1647,14 +1685,14 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
           <h2 className="text-xl font-black">Adicionar item ao catálogo</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Título"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} /></Field>
-            <Field label="Categoria"><select className="foundy-input" value={categoriaCatalogo} onChange={(event) => { const value = event.target.value as ItemFilter; setCategoriaCatalogo(value); if (categoriaFromFiltro(value) === 'documentos') setImagemUrl('') }}>{Object.entries(filtrosFoundy).filter(([value]) => value !== 'todos').map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
+            <Field label="Categoria"><select className="foundy-input" value={categoriaCatalogo} onChange={(event) => { const value = event.target.value as ItemFilter; setCategoriaCatalogo(value); if (isDocumentSensitiveFilter(value)) setImagemUrl('') }}>{Object.entries(filtrosFoundy).filter(([value]) => value !== 'todos').map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
           </div>
           <Field label="Descrição"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} /></Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Código interno"><input className="foundy-input" value={codigo} onChange={(event) => setCodigo(event.target.value)} placeholder="Ex.: BALCAO-042" /></Field>
             <Field label="Local de armazenamento"><input className="foundy-input" value={local} onChange={(event) => setLocal(event.target.value)} placeholder="Ex.: gaveta 2, secretaria" /></Field>
           </div>
-          <button className="h-11 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={() => fileRef.current?.click()}>{categoriaAtual === 'documentos' ? 'Documento: foto bloqueada' : 'Adicionar foto opcional'}</button>
+          <button className="h-11 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={() => fileRef.current?.click()}>{isDocumentSensitiveFilter(categoriaCatalogo) ? 'Documento: foto bloqueada' : 'Adicionar foto opcional'}</button>
           <input className="sr-only" ref={fileRef} type="file" accept="image/*" onChange={selecionarImagem} />
           {imagemUrl ? <img src={imagemUrl} alt="Prévia do catálogo" className="h-40 rounded-2xl object-cover" /> : null}
           <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
@@ -1912,8 +1950,8 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
   const [subcategoriaItem, setSubcategoriaItem] = useState<ItemFilter>('outros')
   const [local, setLocal] = useState('')
   const [desafio, setDesafio] = useState('')
-  const [detalheOculto, setDetalheOculto] = useState('')
   const [imagemUrl, setImagemUrl] = useState('')
+  const [imagemArquivo, setImagemArquivo] = useState<File | null>(null)
   const [coords, setCoords] = useState<GeoPoint>(defaultPoint)
   const [tagsImagem, setTagsImagem] = useState<string[]>([])
   const [mensagem, setMensagem] = useState('A imagem será processada com filtro automático de privacidade.')
@@ -1923,15 +1961,17 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
   async function processarImagemSelecionada(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
-    if (categoriaAtual === 'documentos') {
+    if (isDocumentSensitiveFilter(subcategoriaItem)) {
       setImagemUrl('')
+      setImagemArquivo(null)
       setTagsImagem(['#DocumentoProtegido'])
       setMensagem('Documento selecionado: por segurança, a foto não será publicada. Descreva apenas dados não sensíveis.')
       return
     }
+    setImagemArquivo(file)
     setProcessando(true)
     try {
-      const resultado = await processarImagemComPrivacidade(file, `${titulo} ${descricao}`)
+      const resultado = await processarImagemComPrivacidade(file, `${titulo} ${descricao} ${filtrosFoundy[subcategoriaItem].label}`)
       setImagemUrl(resultado.imagem_data_url)
       setTagsImagem(resultado.hashtags_ia)
       setMensagem('Imagem processada com filtros de privacidade.')
@@ -1952,8 +1992,15 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
   }
 
   async function publicar() {
-    if (!titulo.trim() || !descricao.trim() || !desafio.trim() || !detalheOculto.trim()) return setMensagem('Preencha título, descrição, desafio e detalhe oculto.')
+    if (!titulo.trim() || !descricao.trim() || !desafio.trim()) return setMensagem('Preencha título, descrição e desafio do dono.')
     try {
+      let imagemPublica = isDocumentSensitiveFilter(subcategoriaItem) ? null : imagemUrl || null
+      let tagsPublicas = tagsImagem
+      if (imagemArquivo && !isDocumentSensitiveFilter(subcategoriaItem) && hasDocumentPrivacyHint(titulo, descricao, filtrosFoundy[subcategoriaItem].label, tagsImagem.join(' '))) {
+        const resultado = await processarImagemComPrivacidade(imagemArquivo, `${titulo} ${descricao} ${filtrosFoundy[subcategoriaItem].label}`)
+        imagemPublica = resultado.imagem_data_url
+        tagsPublicas = resultado.hashtags_ia
+      }
       const item = await cadastrarItemAchado({
         titulo,
         descricao,
@@ -1963,9 +2010,9 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
         longitude: coords.longitude,
         local_descricao: local,
         desafio_pergunta: desafio,
-        detalhe_oculto: detalheOculto,
-        imagem_url: categoriaAtual === 'documentos' ? null : imagemUrl || null,
-        tags_ia: tagsImagem.map((tag) => tag.replace(/^#/, '')),
+        detalhe_oculto: desafio,
+        imagem_url: imagemPublica,
+        tags_ia: tagsPublicas.map((tag) => tag.replace(/^#/, '')),
         usuario_id: sessao.usuario_id,
       })
       onPublicado(item)
@@ -1979,22 +2026,19 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
       <div className="grid gap-4 p-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Título"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} placeholder="Ex.: Chave com fita azul" /></Field>
-          <Field label="Categoria do item"><select className="foundy-input" value={subcategoriaItem} onChange={(event) => { const value = event.target.value as ItemFilter; setSubcategoriaItem(value); if (categoriaFromFiltro(value) === 'documentos') setImagemUrl('') }}>{Object.entries(filtrosFoundy).filter(([value]) => value !== 'todos').map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
+          <Field label="Categoria do item"><select className="foundy-input" value={subcategoriaItem} onChange={(event) => { const value = event.target.value as ItemFilter; setSubcategoriaItem(value); if (isDocumentSensitiveFilter(value)) { setImagemUrl(''); setImagemArquivo(null) } }}>{Object.entries(filtrosFoundy).filter(([value]) => value !== 'todos').map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
         </div>
         <Field label="Descrição pública"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} placeholder="Não informe telefone, e-mail, CPF ou endereço exato." /></Field>
         <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-foundy-border text-sm font-bold disabled:opacity-60" type="button" onClick={() => fileInputRef.current?.click()} disabled={processando}>
-          <Camera size={17} /> {categoriaAtual === 'documentos' ? 'Documento: foto bloqueada' : processando ? 'Processando...' : 'Upload com privacidade'}
+          <Camera size={17} /> {isDocumentSensitiveFilter(subcategoriaItem) ? 'Documento: foto bloqueada' : processando ? 'Processando...' : 'Upload com privacidade'}
         </button>
         <input accept="image/*" className="sr-only" ref={fileInputRef} type="file" onChange={(event) => void processarImagemSelecionada(event)} />
         {imagemUrl ? <img src={imagemUrl} alt="Prévia protegida do item" className="h-44 w-full rounded-2xl object-cover" /> : null}
         <Field label="Local aproximado"><input className="foundy-input" value={local} onChange={(event) => setLocal(event.target.value)} placeholder="Ex.: perto da praça" /></Field>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Desafio do dono"><input className="foundy-input" value={desafio} onChange={(event) => setDesafio(event.target.value)} placeholder="Ex.: Qual detalhe interno?" /></Field>
-          <Field label="Detalhe oculto"><input className="foundy-input" value={detalheOculto} onChange={(event) => setDetalheOculto(event.target.value)} placeholder="Resposta que só o dono sabe" /></Field>
-        </div>
+        <Field label="Desafio do dono"><input className="foundy-input" value={desafio} onChange={(event) => setDesafio(event.target.value)} placeholder="Ex.: Qual detalhe interno só o dono conseguiria descrever?" /></Field>
         <button className="h-10 rounded-xl border border-foundy-border text-sm font-bold" type="button" onClick={usarGeolocalizacao}>Usar minha localização</button>
         <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
-        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => void publicar()}>Publicar com detalhe oculto</button>
+        <button className="h-11 rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" type="button" onClick={() => void publicar()}>Publicar com desafio do dono</button>
       </div>
     </ModalBase>
   )
@@ -2306,7 +2350,7 @@ function ModalChatSeguro({
 function ModalOnboarding({ onClose }: { onClose: () => void }) {
   const steps = [
     ['1', 'Publique ou busque', 'Escolha Perdi algo ou Achei algo e descreva sem dados sensíveis.'],
-    ['2', 'Prove que é seu', 'Use o detalhe oculto para liberar a conversa apenas para quem realmente conhece o item.'],
+    ['2', 'Prove que é seu', 'Use o desafio do dono para liberar a conversa apenas para quem realmente conhece o item.'],
     ['3', 'Combine com segurança', 'Encontro público, de dia, acompanhado e sem pagamento antecipado.'],
     ['4', 'Avalie a entrega', 'Depois da devolução, a nota vira Pontos de Luz para o encontrador.'],
   ]
@@ -2331,7 +2375,7 @@ function ModalOnboarding({ onClose }: { onClose: () => void }) {
 
 function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { data: AdminData; adminId: string; onClose: () => void; onRefresh: () => void; embedded?: boolean }) {
   const [mensagem, setMensagem] = useState('Painel restrito ao administrador configurado.')
-  const [tab, setTab] = useState<'itens' | 'usuarios' | 'empresas' | 'denuncias' | 'banidos'>('itens')
+  const [tab, setTab] = useState<'itens' | 'arquivados' | 'usuarios' | 'empresas' | 'denuncias' | 'denunciasResolvidas' | 'banidos'>('itens')
   const [busca, setBusca] = useState('')
   const [detalhe, setDetalhe] = useState<{ titulo: string; dados: Record<string, unknown> } | null>(null)
 
@@ -2339,8 +2383,10 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
   const empresas = (data.empresas ?? []) as Record<string, unknown>[]
   const itens = data.itens as unknown as Record<string, unknown>[]
   const alertas = (data.alertas_perdidos ?? []) as Record<string, unknown>[]
+  const arquivados = (data.itens_arquivados ?? []) as Record<string, unknown>[]
   const denunciasChat = (data.denuncias ?? []) as Record<string, unknown>[]
   const denunciasPosts = (data.denuncias_posts ?? []) as Record<string, unknown>[]
+  const denunciasResolvidas = (data.denuncias_resolvidas ?? []) as Record<string, unknown>[]
   const banidos = (data.banidos ?? []) as Record<string, unknown>[]
   const termo = busca.trim().toLowerCase()
 
@@ -2396,9 +2442,11 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
   }
 
   const itemRows = filtrar([...itens, ...alertas])
+  const archivedRows = filtrar(arquivados)
   const userRows = filtrar(usuarios)
   const companyRows = filtrar(empresas)
   const reportRows = filtrar([...denunciasChat.map((row) => ({ ...row, origem_denuncia: 'chat' })), ...denunciasPosts.map((row) => ({ ...row, origem_denuncia: 'post' }))])
+  const resolvedReportRows = filtrar(denunciasResolvidas)
   const bannedRows = filtrar(banidos)
 
   function DetailButton({ row, title }: { row: Record<string, unknown>; title: string }) {
@@ -2409,6 +2457,50 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
     const motivo = window.prompt('Resumo da decisão administrativa?', 'Denúncia analisada e marcada como resolvida.') ?? ''
     if (motivo.length < 5 || typeof row.id !== 'string') return
     void adminResolverDenuncia(adminId, row.id, denunciaTipo, motivo).then((resposta) => {
+      setMensagem(resposta.mensagem)
+      onRefresh()
+    })
+  }
+
+  function desarquivar(row: Record<string, unknown>) {
+    const motivo = window.prompt('Motivo para desarquivar este registro?', 'Registro revisado e liberado novamente.') ?? ''
+    if (motivo.length < 5 || typeof row.id !== 'string') return
+    const tipo = row.tipo_registro === 'alerta_perdido' || row.raio_metros ? 'alerta' : 'item'
+    void adminDesarquivarItem(adminId, row.id, motivo, tipo).then((resposta) => {
+      setMensagem(resposta.mensagem)
+      onRefresh()
+    })
+  }
+
+  function excluirPermanente(row: Record<string, unknown>) {
+    const confirmacao = window.confirm('Excluir permanentemente este registro e seus vínculos? Esta ação não deve ser usada sem revisão.')
+    if (!confirmacao || typeof row.id !== 'string') return
+    const motivo = window.prompt('Motivo da exclusão permanente?') ?? ''
+    if (motivo.length < 5) return
+    const tipo = row.tipo_registro === 'alerta_perdido' || row.raio_metros ? 'alerta' : 'item'
+    void adminExcluirRegistroPermanente(adminId, row.id, motivo, tipo).then((resposta) => {
+      setMensagem(resposta.mensagem)
+      onRefresh()
+    })
+  }
+
+  function desfazerDenuncia(row: Record<string, unknown>) {
+    const origem = row.origem_denuncia === 'chat' ? 'chat' : 'post'
+    const motivo = window.prompt('Motivo para desfazer a ação e reabrir a denúncia?', 'Revisão administrativa solicitada.') ?? ''
+    if (motivo.length < 5 || typeof row.id !== 'string') return
+    void adminDesfazerModeracaoDenuncia(adminId, row.id, origem, motivo).then((resposta) => {
+      setMensagem(resposta.mensagem)
+      onRefresh()
+    })
+  }
+
+  function excluirDenuncia(row: Record<string, unknown>) {
+    const origem = row.origem_denuncia === 'chat' ? 'chat' : 'post'
+    const confirmacao = window.confirm('Excluir permanentemente os dados desta denúncia?')
+    if (!confirmacao || typeof row.id !== 'string') return
+    const motivo = window.prompt('Motivo da exclusão permanente da denúncia?') ?? ''
+    if (motivo.length < 5) return
+    void adminExcluirDenuncia(adminId, row.id, origem, motivo).then((resposta) => {
       setMensagem(resposta.mensagem)
       onRefresh()
     })
@@ -2427,9 +2519,11 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
       <div className="foundy-tabbar flex gap-2 overflow-x-auto rounded-2xl border border-foundy-border bg-foundy-background p-1">
         {[
           ['itens', `Itens (${itemRows.length})`],
+          ['arquivados', `Arquivados (${archivedRows.length})`],
           ['usuarios', `Usuários (${userRows.length})`],
           ['empresas', `Empresas (${companyRows.length})`],
           ['denuncias', `Denúncias (${reportRows.length})`],
+          ['denunciasResolvidas', `Resolvidas (${resolvedReportRows.length})`],
           ['banidos', `Banidos (${bannedRows.length})`],
         ].map(([id, label]) => <button className={`shrink-0 rounded-xl px-3 py-2 text-sm font-black ${tab === id ? 'bg-foundy-blue text-white' : 'text-foundy-muted'}`} key={id} type="button" onClick={() => setTab(id as typeof tab)}>{label}</button>)}
       </div>
@@ -2440,11 +2534,19 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
         return <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]" key={`${isAlert ? 'alerta' : 'item'}-${id}`}><div><p className="text-sm font-black">{String(row.titulo ?? 'Sem título')}</p><p className="mt-1 text-xs text-foundy-muted">{isAlert ? 'Alerta de perda' : 'Item achado'} - {String(row.status ?? 'sem status')} - publicado por {String(row.usuario_nome ?? row.usuario_email ?? row.usuario_id ?? 'não identificado')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.titulo ?? id)} />{!isAlert ? <button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void arquivar(id)}><Trash2 size={14} /></button> : null}</div></div>
       })}</PanelList> : null}
 
+      {tab === 'arquivados' ? <PanelList title="Itens arquivados" empty="Nenhum item arquivado.">{archivedRows.map((row) => {
+        const id = String(row.id)
+        const isAlert = row.tipo_registro === 'alerta_perdido' || Boolean(row.raio_metros)
+        return <div className="grid gap-3 rounded-2xl border border-amber-300/30 bg-amber-500/10 p-3 md:grid-cols-[1fr_auto]" key={`${isAlert ? 'alerta-arquivado' : 'item-arquivado'}-${id}`}><div><p className="text-sm font-black text-amber-100">{String(row.titulo ?? 'Sem título')}</p><p className="mt-1 text-xs text-amber-100/75">{isAlert ? 'Alerta de perda arquivado' : 'Item achado arquivado'} - publicado por {String(row.usuario_nome ?? row.usuario_email ?? row.usuario_id ?? 'não identificado')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.titulo ?? id)} /><button className="rounded-xl border border-foundy-green/50 px-3 py-2 text-xs font-black text-foundy-green" type="button" onClick={() => desarquivar(row)}>Desarquivar</button><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => excluirPermanente(row)}>Excluir para sempre</button></div></div>
+      })}</PanelList> : null}
+
       {tab === 'usuarios' ? <PanelList title="Usuários pessoais" empty="Nenhum usuário encontrado.">{userRows.map((row) => <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]" key={String(row.id)}><div><p className="text-sm font-black">{String(row.nome ?? row.email ?? row.id)}</p><p className="mt-1 text-xs text-foundy-muted">{String(row.email ?? 'sem e-mail')} | Karma: {String(row.pontos_luz ?? 0)} | Itens: {String(row.total_itens_postados ?? 0)}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.nome ?? row.email ?? row.id)} /><button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(String(row.id))}>Avisar</button><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => void aplicarMedida(String(row.id), 'chat')}>Bloquear chat</button><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(String(row.id), 'conta')}>Suspender conta</button></div></div>)}</PanelList> : null}
 
       {tab === 'empresas' ? <PanelList title="Contas empresariais" empty="Nenhuma empresa encontrada.">{companyRows.map((row) => <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]" key={String(row.id)}><div><p className="text-sm font-black">{String(row.empresa_nome ?? row.nome ?? row.email)}</p><p className="mt-1 text-xs text-foundy-muted">{String(row.email ?? 'sem e-mail')} | Catálogo público: {String(row.empresa_catalogo_publico ?? true)} | Itens: {String(row.total_itens_postados ?? 0)}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.empresa_nome ?? row.nome ?? row.id)} /><button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(String(row.id))}>Avisar</button><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(String(row.id), 'conta')}>Suspender</button></div></div>)}</PanelList> : null}
 
       {tab === 'denuncias' ? <PanelList title="Denúncias de chat e posts" empty="Nenhuma denúncia registrada.">{reportRows.map((row) => { const denunciadoId = String(row.usuario_denunciado_id ?? ''); const origem = row.origem_denuncia === 'chat' ? 'chat' : 'post'; return <div className="grid gap-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3" key={`${origem}-${String(row.id)}`}><div><p className="text-sm font-black text-red-100">{origem === 'chat' ? 'Denúncia de chat' : 'Denúncia de post'}: {String(row.motivo_tipo ?? row.motivo ?? 'sem motivo')}</p><p className="mt-1 text-xs text-red-100/75">Denunciante: {String(row.denunciante_nome ?? row.denunciante_email ?? row.usuario_denunciante_id ?? 'não identificado')} | Denunciado: {String(row.denunciado_nome ?? row.denunciado_email ?? row.usuario_denunciado_id ?? 'não identificado')} | Item: {String(row.item_titulo ?? row.alerta_titulo ?? row.item_achado_id ?? row.alerta_perdido_id ?? 'não informado')}</p><p className="mt-2 text-sm text-red-100/85">{String(row.motivo ?? 'Sem descrição detalhada.')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={`Denúncia ${origem}`} /><button className="rounded-xl border border-foundy-green/50 px-3 py-2 text-xs font-black text-foundy-green" type="button" onClick={() => resolverDenuncia(row, origem)}>Resolvida</button>{denunciadoId ? <button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(denunciadoId, row, origem)}>Avisar</button> : null}{denunciadoId ? <button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-100" type="button" onClick={() => void aplicarMedida(denunciadoId, 'chat', row, origem)}>Bloquear chat</button> : null}{denunciadoId ? <button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(denunciadoId, 'conta', row, origem)}>Suspender conta</button> : null}</div></div> })}</PanelList> : null}
+
+      {tab === 'denunciasResolvidas' ? <PanelList title="Denúncias resolvidas" empty="Nenhuma denúncia resolvida ainda.">{resolvedReportRows.map((row) => { const origem = row.origem_denuncia === 'chat' ? 'chat' : 'post'; return <div className="grid gap-3 rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-3" key={`resolvida-${origem}-${String(row.id)}`}><div><p className="text-sm font-black text-foundy-green">{origem === 'chat' ? 'Denúncia de chat resolvida' : 'Denúncia de post resolvida'}: {String(row.status ?? 'resolvida')}</p><p className="mt-1 text-xs text-foundy-muted">Denunciante: {String(row.denunciante_nome ?? row.denunciante_email ?? row.usuario_denunciante_id ?? 'não identificado')} | Denunciado: {String(row.denunciado_nome ?? row.denunciado_email ?? row.usuario_denunciado_id ?? 'não identificado')}</p><p className="mt-2 text-sm text-foundy-muted">Decisão: {String(row.decisao_admin ?? row.motivo ?? 'sem decisão registrada')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={`Denúncia resolvida ${origem}`} /><button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => desfazerDenuncia(row)}>Desfazer ação</button><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => excluirDenuncia(row)}>Excluir dados</button></div></div> })}</PanelList> : null}
 
       {tab === 'banidos' ? <PanelList title="Usuários com restrição ativa" empty="Nenhum usuário banido no momento.">{bannedRows.map((row) => <div className="grid gap-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3 md:grid-cols-[1fr_auto]" key={String(row.id)}><div><p className="text-sm font-black text-red-100">{String(row.nome ?? row.email ?? row.id)}</p><p className="mt-1 text-xs text-red-100/75">Conta: {String(row.banimento_motivo ?? 'sem banimento de conta')} | Chat: {String(row.chat_banimento_motivo ?? 'sem banimento de chat')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.nome ?? row.email ?? row.id)} /><button className="rounded-xl bg-foundy-green px-3 py-2 text-xs font-black text-slate-950" type="button" onClick={() => void desbanir(String(row.id))}>Desbanir</button></div></div>)}</PanelList> : null}
 
@@ -2478,11 +2580,14 @@ function ModalBusca({ filtro, buscaTexto, itensVisiveis, totalItens, onFiltroCha
 function AdminDetailValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
   const text = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? 'não informado')
   const isImage = typeof value === 'string' && (fieldKey.includes('imagem') || fieldKey.includes('foto')) && (value.startsWith('http') || value.startsWith('data:image/'))
+  const isHugeBase64Image = typeof value === 'string' && value.startsWith('data:image/') && value.length > 300_000
   return (
     <div className="rounded-2xl border border-foundy-border bg-foundy-surface p-3">
       <dt className="text-xs font-black uppercase tracking-wide text-foundy-muted">{fieldKey}</dt>
       <dd className="mt-2 whitespace-pre-wrap break-words">
-        {isImage ? (
+        {isHugeBase64Image ? (
+          <div className="rounded-xl border border-amber-300/40 bg-amber-500/10 p-3 text-sm text-amber-100">Imagem antiga em base64 ocultada para não travar o painel. Novas imagens são salvas como URL pública do Storage.</div>
+        ) : isImage ? (
           <img src={String(value)} alt={`Imagem vinculada a ${fieldKey}`} className="max-h-72 w-full rounded-2xl object-contain bg-black/20" />
         ) : text.length > 320 ? (
           <details>
@@ -2502,7 +2607,7 @@ function ModalAcaoRapida({ onClose, onEscolherPerdi, onEscolherAchei }: { onClos
     <ModalBase titulo="Nova ação rápida" subtitulo="Selecione o fluxo ideal." onClose={onClose}>
       <div className="grid gap-3 p-4">
         <button className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-red-500 px-4 text-left text-white" type="button" onClick={onEscolherPerdi}><span><strong className="block">Perdi algo</strong><span className="text-sm opacity-90">Criar alerta com perímetro</span></span><MapPin size={18} /></button>
-        <button className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-foundy-green px-4 text-left text-slate-950" type="button" onClick={onEscolherAchei}><span><strong className="block">Achei algo</strong><span className="text-sm opacity-90">Publicar com desafio oculto</span></span><CheckCircle2 size={18} /></button>
+        <button className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-foundy-green px-4 text-left text-slate-950" type="button" onClick={onEscolherAchei}><span><strong className="block">Achei algo</strong><span className="text-sm opacity-90">Publicar com desafio do dono</span></span><CheckCircle2 size={18} /></button>
       </div>
     </ModalBase>
   )
@@ -2537,7 +2642,7 @@ function ModalRespostaEnviada({ onClose }: { onClose: () => void }) {
 
 function ModalAguardandoValidacao({ reivindicacaoId, claim, onClose, onValidar }: { reivindicacaoId: string | null; claim: ClaimSummary | null; onClose: () => void; onValidar: (aprovada: boolean) => void }) {
   return (
-    <ModalBase titulo="Validação do detalhe oculto" subtitulo="O encontrador decide se a resposta confere." onClose={onClose}>
+    <ModalBase titulo="Validação do desafio do dono" subtitulo="O encontrador decide se a resposta confere." onClose={onClose}>
       <div className="grid gap-4 p-4">
         <p className="text-sm text-foundy-muted">Reivindicação atual: <strong>{reivindicacaoId ?? 'não identificada'}</strong>.</p>
         {claim ? (
@@ -2566,7 +2671,7 @@ function ModalManifestoSeguranca({ onClose }: { onClose: () => void }) {
         </p>
         <TrustCard title="Encontros apenas em locais públicos" text="Nunca marque em residência, local isolado, estacionamento vazio ou endereço particular. Prefira shoppings, estações, praças movimentadas ou bases policiais." />
         <TrustCard title="Use a luz do dia" text="Combine a retirada entre 8h e 18h, em local iluminado e com fluxo de pessoas." />
-        <TrustCard title="Faça a pergunta secreta" text="Antes do encontro, confirme o detalhe oculto do item. A conversa só deve avançar quando a posse estiver minimamente comprovada." />
+        <TrustCard title="Faça o desafio do dono" text="Antes do encontro, confirme a resposta do desafio. A conversa só deve avançar quando a posse estiver minimamente comprovada." />
         <TrustCard title="Não vá sozinho" text="Sempre que possível, leve um amigo ou familiar. Avise alguém de confiança sobre o local e horário." />
         <TrustCard title="Nunca pague resgate" text="PIX, taxa obrigatória, frete antecipado, cobrança ou recompensa como condição de devolução violam o Protocolo Foundy." />
         <TrustCard title="Empresas são catálogo" text="Instituições exibem itens para retirada presencial, sem chat, segredo ou reivindicação online." />

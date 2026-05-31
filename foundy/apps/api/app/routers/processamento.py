@@ -1,6 +1,6 @@
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
-from app.services.ai_processing import blur_faces_and_sensitive_regions, to_base64_webp
+from app.services.ai_processing import blur_faces_and_sensitive_regions, standardize_document_public_text, to_base64_webp
 
 
 router = APIRouter()
@@ -26,6 +26,6 @@ async def processar_imagem(
         "imagem_webp_base64": to_base64_webp(processed),
         "tags_ia": tags,
         "hashtags_ia": hashtags,
-        "texto_publico_padronizado": None,
+        "texto_publico_padronizado": standardize_document_public_text(texto_extraido),
         "motivos_privacidade": motivos,
     }

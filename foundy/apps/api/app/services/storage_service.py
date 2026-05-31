@@ -37,6 +37,14 @@ def _parse_data_url(value: str) -> ParsedImage | None:
     return ParsedImage(content=content, mime_type=mime_type, extension=extension)
 
 
+def parse_image_data_url(value: str) -> ParsedImage | None:
+    return _parse_data_url(value)
+
+
+def image_bytes_to_data_url(content: bytes, mime_type: str = "image/webp") -> str:
+    return f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+
+
 def _public_storage_url(path: str) -> str:
     base_url = settings.supabase_url.rstrip("/")
     bucket = settings.supabase_storage_bucket

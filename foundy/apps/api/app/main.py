@@ -1,12 +1,16 @@
 from contextlib import asynccontextmanager
+import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.db.pool import close_db, connect_to_db
 from app.db.supabase_client import close_supabase, init_supabase
 from app.routers import admin, empresas, itens_achados, karma, notificacoes, painel, processamento, usuarios
+
+logger = logging.getLogger("foundy.api")
 
 
 @asynccontextmanager
@@ -42,6 +46,18 @@ app.include_router(karma.router, prefix="/karma", tags=["Pontos de Luz"])
 app.include_router(painel.router, prefix="/painel", tags=["Painel do Usuario"])
 app.include_router(admin.router, prefix="/admin", tags=["Administracao"])
 app.include_router(empresas.router, prefix="/empresas", tags=["Empresas"])
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Erro nao tratado em %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "A API do Foundy encontrou uma falha interna. Tente novamente em instantes.",
+            "erro_tecnico": exc.__class__.__name__,
+        },
+    )
 
 
 @app.get("/health", tags=["Sistema"])

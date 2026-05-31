@@ -85,6 +85,16 @@ EXTORTION_TERMS = {
     "pixzinho",
     "manda dinheiro",
     "me paga",
+    "me manda",
+    "mande o dinheiro",
+    "quero pagamento",
+    "quero dinheiro",
+    "so com dinheiro",
+    "so no dinheiro",
+    "acerto",
+    "acertar comigo",
+    "restituicao",
+    "devolucao paga",
 }
 
 COERCION_TERMS = {
@@ -148,6 +158,19 @@ INSULT_TERMS = {
     "arrombada",
     "caloteiro",
     "caloteira",
+    "gostosa",
+    "gostoso",
+    "safado",
+    "safada",
+    "babaca",
+    "corno",
+    "corna",
+    "bosta",
+    "vai tomar no cu",
+    "tomar no cu",
+    "cuzao",
+    "cuzona",
+    "piranha",
 }
 
 THREAT_TERMS = {
@@ -292,12 +315,12 @@ def scan_chat_message(body: str) -> ScanResult:
             reasons=reasons,
         )
 
-    if has_payment_term and mentions_return:
+    if has_payment_term:
         return ScanResult(
             blocked=False,
             flagged=True,
             reasons=[
-                "Mensagem sinalizada por associar pagamento ao processo de devolução.",
+                "Mensagem sinalizada por mencionar pagamento, cobrança, PIX ou dinheiro dentro do chat de recuperação.",
                 f"Termos financeiros detectados: {', '.join(payment_matches[:4])}.",
             ],
         )

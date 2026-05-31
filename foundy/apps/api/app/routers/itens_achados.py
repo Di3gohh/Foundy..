@@ -9,14 +9,14 @@ from pydantic import BaseModel, Field, field_validator
 from postgrest.exceptions import APIError
 
 from app.core.config import settings
-from app.core.filters import censor_sensitive_text, scan_chat_message, scan_item_text
+from app.core.filters import censor_sensitive_text, normalize_text, scan_chat_message, scan_item_text
 from app.core.geo import mask_coordinates, validate_coordinates
 from app.core.security import hash_password
 from app.db.supabase_client import get_supabase
-from app.services.ai_processing import generate_hashtag_descriptors
+from app.services.ai_processing import blur_faces_and_sensitive_regions, generate_hashtag_descriptors
 from app.services.email_service import send_notification_email, send_support_email
 from app.services.moderation_service import aplicar_moderacao_progressiva
-from app.services.storage_service import store_public_image_if_needed
+from app.services.storage_service import image_bytes_to_data_url, parse_image_data_url, store_public_image_if_needed
 
 
 router = APIRouter()
@@ -47,7 +47,7 @@ class ItemAchadoCreate(BaseModel):
     imagem_url: str | None = Field(default=None, max_length=5_000_000)
     usuario_id: UUID | None = None
     desafio_pergunta: str = Field(min_length=6, max_length=240)
-    detalhe_oculto: str = Field(min_length=2, max_length=240)
+    detalhe_oculto: str | None = Field(default=None, min_length=2, max_length=240)
     tags_ia: list[str] = Field(default_factory=list, max_length=12)
 
 
@@ -172,6 +172,48 @@ def _normalize_display_hashtags(values: list[str]) -> list[str]:
         if cleaned not in display:
             display.append(cleaned)
     return display[:12]
+
+
+DOCUMENT_PRIVACY_HINTS = (
+    "rg",
+    "cpf",
+    "cnh",
+    "documento",
+    "identidade",
+    "certidao",
+    "passaporte",
+    "titulo de eleitor",
+    "carteira de trabalho",
+    "cartao do sus",
+    "documento pessoal",
+)
+
+
+def _requires_document_privacy(categoria: str | None, subcategoria: str | None, *texts: str) -> bool:
+    if categoria == "documentos" or subcategoria == "documentos":
+        return True
+    searchable = normalize_text(" ".join(texts))
+    return any(normalize_text(hint) in searchable for hint in DOCUMENT_PRIVACY_HINTS)
+
+
+async def _prepare_public_image(
+    imagem_url: str | None,
+    *,
+    folder: str,
+    document_privacy: bool,
+    privacy_hint_text: str,
+) -> str | None:
+    if not imagem_url:
+        return None
+
+    if document_privacy:
+        parsed = parse_image_data_url(imagem_url)
+        if parsed is None:
+            return None
+        processed, _tags, _reasons = blur_faces_and_sensitive_regions(parsed.content, privacy_hint_text)
+        imagem_url = image_bytes_to_data_url(processed)
+
+    return await store_public_image_if_needed(imagem_url, folder)
 
 
 def _normalize_reasons(value) -> list[str]:
@@ -352,14 +394,19 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate, background_tasks: Bac
     titulo = payload.titulo.strip()
     descricao = payload.descricao.strip()
     local_descricao = payload.local_descricao.strip() if payload.local_descricao else None
-    imagem_publica = None if payload.categoria == "documentos" else payload.imagem_url
-    if imagem_publica:
-        try:
-            imagem_publica = await store_public_image_if_needed(imagem_publica, f"itens/{payload.usuario_id}")
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    privacy_hint_text = " ".join([titulo, descricao, payload.subcategoria or "", " ".join(payload.tags_ia)])
+    document_privacy = _requires_document_privacy(payload.categoria, payload.subcategoria, privacy_hint_text)
+    try:
+        imagem_publica = await _prepare_public_image(
+            payload.imagem_url,
+            folder=f"itens/{payload.usuario_id}",
+            document_privacy=document_privacy,
+            privacy_hint_text=privacy_hint_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    if payload.categoria == "documentos":
+    if document_privacy:
         descricao = censor_sensitive_text(descricao)
         titulo = censor_sensitive_text(titulo)
 
@@ -411,7 +458,7 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate, background_tasks: Bac
         "imagem_url": str(imagem_publica) if imagem_publica else None,
         "status": "publicado",
         "desafio_pergunta": payload.desafio_pergunta.strip(),
-        "detalhe_oculto_hash": hash_password(payload.detalhe_oculto.strip().casefold()),
+        "detalhe_oculto_hash": hash_password((payload.detalhe_oculto or payload.desafio_pergunta).strip().casefold()),
         "tags_ia": tokens,
         "hashtags": tokens,
         "ultimo_movimento_em": datetime.now(timezone.utc).isoformat(),
@@ -527,7 +574,7 @@ async def reivindicar_item(item_id: UUID, payload: ReivindicacaoCreate) -> dict[
                 {
                     "usuario_id": item.data[0]["usuario_id"],
                     "tipo": "sistema",
-                    "titulo": "Alguém respondeu ao desafio oculto",
+                    "titulo": "Alguém respondeu ao desafio do dono",
                     "mensagem": f"Uma pessoa acredita que o item '{item.data[0]['titulo']}' é dela. Confira a resposta.",
                     "item_achado_id": str(item_id),
                     "reivindicacao_id": response.data[0]["id"],
