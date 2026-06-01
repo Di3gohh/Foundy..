@@ -25,7 +25,13 @@ class Settings(BaseSettings):
     resend_from_email: str | None = Field(default=None, alias="RESEND_FROM_EMAIL")
     support_email: str = Field(default="foundy.company@gmail.com", alias="SUPPORT_EMAIL")
     foundy_support_pix_key: str | None = Field(default=None, alias="FOUNDY_SUPPORT_PIX_KEY")
+    mercado_pago_environment: str = Field(default="production", alias="MERCADO_PAGO_ENVIRONMENT")
+    mercado_pago_public_key: str | None = Field(default=None, alias="MERCADO_PAGO_PUBLIC_KEY")
     mercado_pago_access_token: str | None = Field(default=None, alias="MERCADO_PAGO_ACCESS_TOKEN")
+    mercado_pago_test_public_key: str | None = Field(default=None, alias="MERCADO_PAGO_TEST_PUBLIC_KEY")
+    mercado_pago_test_access_token: str | None = Field(default=None, alias="MERCADO_PAGO_TEST_ACCESS_TOKEN")
+    mercado_pago_production_public_key: str | None = Field(default=None, alias="MERCADO_PAGO_PRODUCTION_PUBLIC_KEY")
+    mercado_pago_production_access_token: str | None = Field(default=None, alias="MERCADO_PAGO_PRODUCTION_ACCESS_TOKEN")
     mercado_pago_webhook_secret: str | None = Field(default=None, alias="MERCADO_PAGO_WEBHOOK_SECRET")
     stripe_secret_key: str | None = Field(default=None, alias="STRIPE_SECRET_KEY")
     stripe_webhook_secret: str | None = Field(default=None, alias="STRIPE_WEBHOOK_SECRET")
@@ -49,6 +55,23 @@ class Settings(BaseSettings):
     def supabase_backend_key(self) -> str | None:
         """Prefer server-only keys and keep SUPABASE_KEY as a compatibility fallback."""
         return self.supabase_secret_key or self.supabase_service_role_key or self.supabase_key
+
+    @property
+    def mercado_pago_active_environment(self) -> str:
+        environment = self.mercado_pago_environment.strip().lower()
+        return "test" if environment in {"test", "sandbox", "development", "preview"} else "production"
+
+    @property
+    def mercado_pago_active_access_token(self) -> str | None:
+        if self.mercado_pago_active_environment == "test":
+            return self.mercado_pago_test_access_token or self.mercado_pago_access_token
+        return self.mercado_pago_production_access_token or self.mercado_pago_access_token
+
+    @property
+    def mercado_pago_active_public_key(self) -> str | None:
+        if self.mercado_pago_active_environment == "test":
+            return self.mercado_pago_test_public_key or self.mercado_pago_public_key
+        return self.mercado_pago_production_public_key or self.mercado_pago_public_key
 
 
 @lru_cache

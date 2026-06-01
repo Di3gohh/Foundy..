@@ -44,6 +44,14 @@ class PaymentGatewayError(RuntimeError):
     pass
 
 
+def mercado_pago_access_token() -> str | None:
+    return settings.mercado_pago_active_access_token
+
+
+def mercado_pago_environment() -> str:
+    return settings.mercado_pago_active_environment
+
+
 def money_from_cents(amount_cents: int) -> str:
     value = amount_cents / 100
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -252,17 +260,57 @@ def manual_payment_instructions(amount_cents: int, reference: str) -> dict:
     }
 
 
-async def payment_instructions(amount_cents: int, reference: str, title: str, description: str, payer_email: str | None = None) -> dict:
-    if settings.mercado_pago_access_token:
+async def payment_instructions(
+    amount_cents: int,
+    reference: str,
+    title: str,
+    description: str,
+    payer_email: str | None = None,
+    *,
+    recurring: bool = False,
+) -> dict:
+    token = mercado_pago_access_token()
+    if token:
         try:
-            return await create_mercado_pago_preference(amount_cents, reference, title, description, payer_email)
+            if recurring:
+                if not payer_email:
+                    raise PaymentGatewayError("Assinaturas exigem e-mail do pagador.")
+                return await create_mercado_pago_subscription(amount_cents, reference, title, description, payer_email, token)
+            return await create_mercado_pago_preference(amount_cents, reference, title, description, payer_email, token)
         except PaymentGatewayError:
             # Mantém o usuário destravado caso o provedor esteja temporariamente indisponível.
             pass
     return manual_payment_instructions(amount_cents, reference)
 
 
-async def create_mercado_pago_preference(amount_cents: int, reference: str, title: str, description: str, payer_email: str | None = None) -> dict:
+async def _mercado_pago_json_request(path: str, payload: dict[str, object] | None = None, *, token: str | None = None, method: str = "POST") -> dict:
+    access_token = token or mercado_pago_access_token()
+    if not access_token:
+        raise PaymentGatewayError("Mercado Pago não configurado.")
+    request = urllib.request.Request(
+        f"https://api.mercadopago.com{path}",
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        raw = await asyncio.to_thread(lambda: urllib.request.urlopen(request, timeout=18).read())
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise PaymentGatewayError("Não foi possível falar com o Mercado Pago.") from exc
+    return json.loads(raw.decode("utf-8"))
+
+
+async def create_mercado_pago_preference(
+    amount_cents: int,
+    reference: str,
+    title: str,
+    description: str,
+    payer_email: str | None = None,
+    token: str | None = None,
+) -> dict:
     api_base = (settings.api_public_url or settings.app_public_url).rstrip("/")
     app_base = settings.app_public_url.rstrip("/")
     payload: dict[str, object] = {
@@ -283,30 +331,22 @@ async def create_mercado_pago_preference(amount_cents: int, reference: str, titl
             "pending": f"{app_base}/monetizacao?pagamento=pendente&referencia={reference}",
         },
         "auto_return": "approved",
+        "payment_methods": {
+            "excluded_payment_types": [],
+            "installments": 12,
+        },
     }
     if payer_email:
         payload["payer"] = {"email": payer_email}
 
-    request = urllib.request.Request(
-        "https://api.mercadopago.com/checkout/preferences",
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {settings.mercado_pago_access_token}",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        raw = await asyncio.to_thread(lambda: urllib.request.urlopen(request, timeout=15).read())
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-        raise PaymentGatewayError("Não foi possível criar preferência no Mercado Pago.") from exc
-
-    response = json.loads(raw.decode("utf-8"))
+    response = await _mercado_pago_json_request("/checkout/preferences", payload, token=token)
     checkout_url = response.get("init_point") or response.get("sandbox_init_point")
     if not checkout_url:
         raise PaymentGatewayError("Mercado Pago não retornou link de checkout.")
     return {
         "provider": "mercado_pago",
+        "payment_mode": "one_time",
+        "payment_environment": mercado_pago_environment(),
         "provider_preference_id": response.get("id"),
         "manual_payment_reference": reference,
         "checkout_url": checkout_url,
@@ -322,13 +362,72 @@ async def create_mercado_pago_preference(amount_cents: int, reference: str, titl
     }
 
 
+async def create_mercado_pago_subscription(
+    amount_cents: int,
+    reference: str,
+    title: str,
+    description: str,
+    payer_email: str,
+    token: str | None = None,
+) -> dict:
+    app_base = settings.app_public_url.rstrip("/")
+    payload: dict[str, object] = {
+        "reason": title[:255],
+        "external_reference": reference,
+        "payer_email": payer_email,
+        "auto_recurring": {
+            "frequency": 1,
+            "frequency_type": "months",
+            "transaction_amount": round(amount_cents / 100, 2),
+            "currency_id": "BRL",
+        },
+        "back_url": f"{app_base}/monetizacao?assinatura=retorno&referencia={reference}",
+        "status": "pending",
+    }
+    if description:
+        payload["metadata"] = {"description": description[:500]}
+
+    response = await _mercado_pago_json_request("/preapproval", payload, token=token)
+    checkout_url = response.get("init_point")
+    if not checkout_url:
+        raise PaymentGatewayError("Mercado Pago não retornou link de assinatura.")
+    return {
+        "provider": "mercado_pago",
+        "payment_mode": "recurring",
+        "payment_environment": mercado_pago_environment(),
+        "provider_subscription_id": response.get("id"),
+        "manual_payment_reference": reference,
+        "checkout_url": checkout_url,
+        "support_email": settings.support_email,
+        "support_pix_key": settings.foundy_support_pix_key,
+        "instructions": [
+            "Assinatura mensal automática via Mercado Pago.",
+            f"Referência: {reference}",
+            f"Valor mensal: {money_from_cents(amount_cents)}",
+            "Abra o checkout de assinatura e autorize a cobrança. Após a aprovação, o Foundy libera o plano automaticamente.",
+            "PIX para mensalidade pode depender das opções liberadas pela sua conta Mercado Pago; cartão é o caminho recorrente principal.",
+        ],
+        "message": "Checkout de assinatura gerado. Esta janela continuará aberta até você concluir ou cancelar.",
+    }
+
+
 def boost_price(boost_type: str) -> dict:
     if boost_type not in LOSS_ALERT_BOOSTS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Plano de destaque inválido.")
     return LOSS_ALERT_BOOSTS[boost_type]
 
 
-async def activate_company_plan(supabase, company_id: str, request_type: str, admin_id: UUID | str, manual_reference_value: str | None, notes: str | None) -> None:
+async def activate_company_plan(
+    supabase,
+    company_id: str,
+    request_type: str,
+    admin_id: UUID | str,
+    manual_reference_value: str | None,
+    notes: str | None,
+    *,
+    provider: str = "manual_or_gateway",
+    provider_subscription_id: str | None = None,
+) -> None:
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(days=30)
     updates = {
@@ -379,8 +478,8 @@ async def activate_company_plan(supabase, company_id: str, request_type: str, ad
                     "company_id": company_id,
                     "plan_type": plan_type,
                     "status": "active",
-                    "provider": "manual_or_gateway",
-                    "provider_subscription_id": manual_reference_value,
+                    "provider": provider,
+                    "provider_subscription_id": provider_subscription_id or manual_reference_value,
                     "current_period_start": now.isoformat(),
                     "current_period_end": expires_at.isoformat(),
                     "amount_cents": COMPANY_PLAN_PRICES.get(request_type, 0),

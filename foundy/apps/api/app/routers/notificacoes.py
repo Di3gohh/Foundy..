@@ -187,6 +187,20 @@ async def criar_alerta_perdido(payload: AlertaPerdidoCreate, background_tasks: B
     except APIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível criar o alerta.") from exc
 
+    await (
+        supabase.table("usuarios")
+        .update(
+            {
+                "ultima_localizacao_alertas": _wkt_point(longitude_aproximada, latitude_aproximada),
+                "ultima_localizacao_alertas_atualizada_em": datetime.now(timezone.utc).isoformat(),
+                "ultimo_post_em": datetime.now(timezone.utc).isoformat(),
+                "atualizado_em": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .eq("id", str(payload.usuario_id))
+        .execute()
+    )
+
     return {"mensagem": "Alerta de perda criado. Vamos avisar se surgir um item compatível.", "alerta_id": response.data[0]["id"]}
 
 

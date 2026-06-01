@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 from postgrest.exceptions import APIError
 
 from app.core.config import settings
+from app.core.geo import mask_coordinates, validate_coordinates
 from app.core.security import hash_password, verify_password
 from app.db.supabase_client import get_supabase
 from app.services.email_service import has_resend_settings, has_smtp_settings, send_support_email, send_verification_email
@@ -56,6 +57,12 @@ class UsuarioPerfilUpdate(BaseModel):
     foto_url: str | None = Field(default=None, max_length=5_000_000)
     ocupacao: str | None = Field(default=None, max_length=120)
     aceita_notificacoes_email: bool | None = None
+    alertas_regionais_email: bool | None = None
+
+
+class UsuarioLocalizacaoAlertasUpdate(BaseModel):
+    latitude: float
+    longitude: float
 
 
 class HubVerificadoCreate(BaseModel):
@@ -81,6 +88,10 @@ def _is_admin(email: str, papel: str | None = None) -> bool:
     return email.lower() in settings.admin_emails
 
 
+def _wkt_point(longitude: float, latitude: float) -> str:
+    return f"POINT({longitude} {latitude})"
+
+
 def _session_payload(usuario: dict) -> dict[str, str]:
     pontos = int(usuario.get("pontos_luz") or 0)
     email = usuario.get("email") or ""
@@ -95,6 +106,7 @@ def _session_payload(usuario: dict) -> dict[str, str]:
         "foto_url": usuario.get("foto_url") or "",
         "ocupacao": usuario.get("ocupacao") or "",
         "aceita_notificacoes_email": str(bool(usuario.get("aceita_notificacoes_email", True))).lower(),
+        "alertas_regionais_email": str(bool(usuario.get("alertas_regionais_email", True))).lower(),
         "is_admin": str(_is_admin(email, usuario.get("papel"))).lower(),
         "tipo_conta": usuario.get("tipo_conta") or "pessoal",
         "empresa_catalogo_publico": str(bool(usuario.get("empresa_catalogo_publico", True))).lower(),
@@ -245,6 +257,7 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
                 "foto_url": None,
                 "ocupacao": None,
                 "aceita_notificacoes_email": payload.aceita_notificacoes_email,
+                "alertas_regionais_email": payload.aceita_notificacoes_email,
                 "termos_aceitos_em": now_iso,
                 "maioridade_confirmada_em": now_iso,
                 "papel": "admin" if _is_admin(email_normalizado) else "usuario",
@@ -390,7 +403,7 @@ async def entrar(payload: UsuarioLogin, request: Request) -> dict[str, str]:
         supabase.table("usuarios")
         .select(
             "id,nome,email,senha_hash,email_verificado_em,nivel_perfil,pontos_luz,"
-            "foto_url,ocupacao,aceita_notificacoes_email,papel,banido_ate,banimento_motivo,"
+            "foto_url,ocupacao,aceita_notificacoes_email,alertas_regionais_email,papel,banido_ate,banimento_motivo,"
             "banido_permanente,banimento_tipo,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente,"
             "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
             "empresa_cnpj,empresa_cep,empresa_verificacao_status,plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,"
@@ -418,6 +431,50 @@ async def entrar(payload: UsuarioLogin, request: Request) -> dict[str, str]:
         .execute()
     )
     return _session_payload(usuario)
+
+
+@router.post("/{usuario_id}/localizacao-alertas")
+async def atualizar_localizacao_alertas(usuario_id: UUID, payload: UsuarioLocalizacaoAlertasUpdate) -> dict[str, str]:
+    try:
+        validate_coordinates(payload.latitude, payload.longitude)
+        latitude_aproximada, longitude_aproximada = mask_coordinates(
+            payload.latitude,
+            payload.longitude,
+            settings.location_mask_radius_meters,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    supabase = get_supabase()
+    usuario = await (
+        supabase.table("usuarios")
+        .select("id,email_verificado_em,banido_ate,banido_permanente,banimento_motivo")
+        .eq("id", str(usuario_id))
+        .is_("removido_em", "null")
+        .limit(1)
+        .execute()
+    )
+    if not usuario.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
+    if usuario.data[0].get("email_verificado_em") is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Confirme seu e-mail antes de ativar alertas regionais.")
+    ban_message = _ban_message(usuario.data[0])
+    if ban_message:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ban_message)
+
+    await (
+        supabase.table("usuarios")
+        .update(
+            {
+                "ultima_localizacao_alertas": _wkt_point(longitude_aproximada, latitude_aproximada),
+                "ultima_localizacao_alertas_atualizada_em": datetime.now(timezone.utc).isoformat(),
+                "atualizado_em": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .eq("id", str(usuario_id))
+        .execute()
+    )
+    return {"mensagem": "Localização aproximada salva para alertas regionais."}
 
 
 @router.patch("/{usuario_id}/perfil")
@@ -459,7 +516,7 @@ async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> di
     refreshed = await (
         supabase.table("usuarios")
         .select(
-            "id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,"
+            "id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,alertas_regionais_email,papel,"
             "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
             "plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,safe_point_latitude,safe_point_longitude,"
             "safe_point_service_days,safe_point_clicks,public_opening_hours,public_slug,"

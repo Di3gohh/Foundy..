@@ -33,6 +33,7 @@ export type FoundySession = {
   foto_url?: string
   ocupacao?: string
   aceita_notificacoes_email?: string
+  alertas_regionais_email?: string
   is_admin?: string
   tipo_conta?: 'pessoal' | 'empresa'
   empresa_catalogo_publico?: string
@@ -251,8 +252,11 @@ export type MonetizationPlansResponse = {
 
 export type ManualPaymentInfo = {
   provider?: 'manual_pix' | 'mercado_pago' | string
+  payment_mode?: 'one_time' | 'recurring' | string
+  payment_environment?: 'test' | 'production' | string
   checkout_url?: string | null
   provider_preference_id?: string | null
+  provider_subscription_id?: string | null
   manual_payment_reference: string
   support_email: string
   support_pix_key?: string | null
@@ -741,7 +745,7 @@ export async function entrarUsuario(payload: { email: string; senha: string }) {
   )
 }
 
-export async function atualizarPerfil(usuarioId: string, payload: { nome?: string; foto_url?: string; ocupacao?: string; aceita_notificacoes_email?: boolean }) {
+export async function atualizarPerfil(usuarioId: string, payload: { nome?: string; foto_url?: string; ocupacao?: string; aceita_notificacoes_email?: boolean; alertas_regionais_email?: boolean }) {
   return requestJson<FoundySession & { mensagem: string }>(
     `/usuarios/${usuarioId}/perfil`,
     {
@@ -750,6 +754,18 @@ export async function atualizarPerfil(usuarioId: string, payload: { nome?: strin
       body: JSON.stringify(payload),
     },
     'Não foi possível atualizar o perfil.',
+  )
+}
+
+export async function atualizarLocalizacaoAlertas(usuarioId: string, latitude: number, longitude: number) {
+  return requestJson<{ mensagem: string }>(
+    `/usuarios/${usuarioId}/localizacao-alertas`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ latitude, longitude }),
+    },
+    'Não foi possível salvar sua região para alertas por e-mail.',
   )
 }
 

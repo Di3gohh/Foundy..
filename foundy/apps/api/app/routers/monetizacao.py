@@ -22,10 +22,11 @@ from app.services.billing_service import (
     confirm_support_contribution,
     manual_payment_instructions,
     manual_reference,
+    mercado_pago_access_token,
     payment_instructions,
     public_plans,
 )
-from app.services.email_service import send_support_email
+from app.services.email_service import send_notification_email, send_support_email
 
 
 router = APIRouter()
@@ -200,18 +201,99 @@ def _with_payment(row: dict, amount_cents: int, prefix: str) -> dict:
 
 
 async def _fetch_mercado_pago_payment(payment_id: str) -> dict:
-    if not settings.mercado_pago_access_token:
+    token = mercado_pago_access_token()
+    if not token:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Mercado Pago não configurado.")
     request = urllib.request.Request(
         f"https://api.mercadopago.com/v1/payments/{payment_id}",
         method="GET",
-        headers={"Authorization": f"Bearer {settings.mercado_pago_access_token}"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     try:
         raw = await asyncio.to_thread(lambda: urllib.request.urlopen(request, timeout=15).read())
     except (urllib.error.HTTPError, urllib.error.URLError) as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível consultar o pagamento.") from exc
     return json.loads(raw.decode("utf-8"))
+
+
+async def _fetch_mercado_pago_subscription(preapproval_id: str) -> dict:
+    token = mercado_pago_access_token()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Mercado Pago não configurado.")
+    request = urllib.request.Request(
+        f"https://api.mercadopago.com/preapproval/{preapproval_id}",
+        method="GET",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        raw = await asyncio.to_thread(lambda: urllib.request.urlopen(request, timeout=15).read())
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível consultar a assinatura.") from exc
+    return json.loads(raw.decode("utf-8"))
+
+
+async def _send_boost_regional_emails(supabase, boost: dict) -> int:
+    if boost.get("regional_emails_sent_at"):
+        return int(boost.get("regional_emails_count") or 0)
+
+    alert = await (
+        supabase.table("alertas_perdidos")
+        .select("id,usuario_id,titulo,descricao,local_descricao,categoria,subcategoria")
+        .eq("id", boost["loss_alert_id"])
+        .limit(1)
+        .execute()
+    )
+    if not alert.data:
+        return 0
+
+    alert_row = alert.data[0]
+    recipients = await supabase.rpc(
+        "buscar_destinatarios_alerta_impulsionado",
+        {"p_alerta_id": boost["loss_alert_id"], "p_raio_metros": 1000, "p_limite": 250},
+    ).execute()
+
+    sent = 0
+    for recipient in recipients.data or []:
+        email = recipient.get("email")
+        usuario_id = recipient.get("usuario_id")
+        if not email or not usuario_id:
+            continue
+        title = "Alerta Ampliado perto de você"
+        body = (
+            f"Um usuário perdeu algo perto da sua região: {alert_row.get('titulo')}.\n\n"
+            f"Categoria: {alert_row.get('subcategoria') or alert_row.get('categoria') or 'não informada'}\n"
+            f"Referência pública: {alert_row.get('local_descricao') or 'região aproximada'}\n\n"
+            "Se você encontrou algo parecido, acesse o Foundy e use o chat seguro. "
+            "Nunca combine encontros em locais isolados."
+        )
+        await (
+            supabase.table("notificacoes")
+            .insert(
+                {
+                    "usuario_id": usuario_id,
+                    "tipo": "sistema",
+                    "titulo": title,
+                    "mensagem": f"{alert_row.get('titulo')} apareceu como alerta ampliado a até 1 km da sua região.",
+                    "alerta_perdido_id": boost["loss_alert_id"],
+                }
+            )
+            .execute()
+        )
+        if await send_notification_email(email, title, body):
+            sent += 1
+
+    await (
+        supabase.table("loss_alert_boosts")
+        .update(
+            {
+                "regional_emails_sent_at": datetime.now(timezone.utc).isoformat(),
+                "regional_emails_count": sent,
+            }
+        )
+        .eq("id", boost["id"])
+        .execute()
+    )
+    return sent
 
 
 async def _fulfill_payment_reference(reference: str, provider_payment_id: str | None = None) -> dict[str, str]:
@@ -230,8 +312,10 @@ async def _fulfill_payment_reference(reference: str, provider_payment_id: str | 
         row = boost.data[0]
         await supabase.table("loss_alert_boosts").update({"payment_status": "approved", "provider_payment_id": provider_payment_id}).eq("id", row["id"]).execute()
         await activate_loss_alert_boost(supabase, row, "mercado_pago", "Pagamento aprovado automaticamente pelo Mercado Pago.")
+        regional_count = await _send_boost_regional_emails(supabase, row)
         await _notify(row.get("user_id"), "Alerta Ampliado ativado", "Seu alerta de perda foi turbinado automaticamente após a aprovação do pagamento.", alerta_id=row.get("loss_alert_id"))
-        return {"mensagem": "Boost ativado automaticamente."}
+        return {"mensagem": f"Boost ativado automaticamente. E-mails regionais enviados: {regional_count}."}
+
 
     request_row = await (
         supabase.table("monetization_requests")
@@ -250,7 +334,7 @@ async def _fulfill_payment_reference(reference: str, provider_payment_id: str | 
             .execute()
         )
         if row.get("company_id"):
-            await activate_company_plan(supabase, row["company_id"], row["request_type"], "mercado_pago", reference, "Pagamento aprovado automaticamente pelo Mercado Pago.")
+            await activate_company_plan(supabase, row["company_id"], row["request_type"], "mercado_pago", reference, "Pagamento aprovado automaticamente pelo Mercado Pago.", provider="mercado_pago")
             await _notify(row.get("company_id"), "Plano empresarial ativado", "O pagamento foi aprovado e os benefícios do plano foram liberados automaticamente.")
         return {"mensagem": "Plano empresarial ativado automaticamente."}
 
@@ -275,6 +359,70 @@ async def _fulfill_payment_reference(reference: str, provider_payment_id: str | 
         return {"mensagem": "Apoio confirmado automaticamente."}
 
     return {"mensagem": "Referência não encontrada ou já processada."}
+
+
+async def _fulfill_subscription_reference(subscription: dict) -> dict[str, str]:
+    reference = subscription.get("external_reference")
+    if not reference:
+        return {"mensagem": "Assinatura recebida sem referência Foundy."}
+
+    supabase = get_supabase()
+    status_mp = str(subscription.get("status") or "").lower()
+    subscription_id = str(subscription.get("id") or "")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    request_row = await (
+        supabase.table("monetization_requests")
+        .select("*")
+        .eq("manual_payment_reference", str(reference))
+        .limit(1)
+        .execute()
+    )
+    if not request_row.data:
+        return {"mensagem": "Solicitação de assinatura não encontrada."}
+
+    row = request_row.data[0]
+    updates = {
+        "provider_subscription_id": subscription_id,
+        "subscription_status": status_mp,
+        "payment_provider": "mercado_pago",
+        "payment_status": status_mp,
+        "updated_at": now_iso,
+    }
+
+    if status_mp in {"authorized", "active"}:
+        updates.update(
+            {
+                "status": "approved",
+                "payment_status": "approved",
+                "reviewed_at": now_iso,
+                "admin_notes": "Assinatura autorizada automaticamente pelo Mercado Pago.",
+            }
+        )
+        await supabase.table("monetization_requests").update(updates).eq("id", row["id"]).execute()
+        if row.get("company_id"):
+            await activate_company_plan(
+                supabase,
+                row["company_id"],
+                row["request_type"],
+                "mercado_pago",
+                str(reference),
+                "Assinatura autorizada automaticamente pelo Mercado Pago.",
+                provider="mercado_pago",
+                provider_subscription_id=subscription_id,
+            )
+            await _notify(row.get("company_id"), "Assinatura empresarial ativada", "Sua mensalidade foi autorizada e os recursos do plano foram liberados.")
+        return {"mensagem": "Assinatura empresarial ativada automaticamente."}
+
+    await supabase.table("monetization_requests").update(updates).eq("id", row["id"]).execute()
+    if row.get("company_id") and status_mp in {"cancelled", "canceled", "paused"}:
+        await (
+            supabase.table("usuarios")
+            .update({"plan_status": "inactive", "atualizado_em": now_iso})
+            .eq("id", row["company_id"])
+            .execute()
+        )
+        await _notify(row.get("company_id"), "Assinatura empresarial atualizada", f"Status da assinatura no Mercado Pago: {status_mp}.")
+    return {"mensagem": f"Assinatura recebida com status {status_mp or 'desconhecido'}."}
 
 
 @router.get("/monetization/plans")
@@ -308,19 +456,26 @@ async def mercado_pago_webhook(request: Request) -> dict[str, str]:
     except Exception:
         payload = {}
 
-    payment_id = (
+    event_id = (
         str(payload.get("data", {}).get("id"))
         if isinstance(payload.get("data"), dict) and payload.get("data", {}).get("id")
         else request.query_params.get("data.id")
         or request.query_params.get("id")
     )
-    topic = payload.get("type") or payload.get("topic") or request.query_params.get("topic")
-    if topic and "payment" not in str(topic):
+    topic = str(payload.get("type") or payload.get("topic") or request.query_params.get("topic") or "")
+
+    if "subscription_preapproval" in topic or "preapproval" in topic:
+        if not event_id:
+            return {"mensagem": "Webhook de assinatura recebido sem identificador."}
+        subscription = await _fetch_mercado_pago_subscription(str(event_id))
+        return await _fulfill_subscription_reference(subscription)
+
+    if topic and "payment" not in topic:
         return {"mensagem": "Evento recebido sem ação necessária."}
-    if not payment_id:
+    if not event_id:
         return {"mensagem": "Webhook recebido sem identificador de pagamento."}
 
-    payment = await _fetch_mercado_pago_payment(payment_id)
+    payment = await _fetch_mercado_pago_payment(str(event_id))
     if payment.get("status") != "approved":
         reference = payment.get("external_reference")
         if reference:
@@ -332,7 +487,7 @@ async def mercado_pago_webhook(request: Request) -> dict[str, str]:
     reference = payment.get("external_reference")
     if not reference:
         return {"mensagem": "Pagamento aprovado sem referência Foundy."}
-    return await _fulfill_payment_reference(str(reference), str(payment_id))
+    return await _fulfill_payment_reference(str(reference), str(event_id))
 
 
 @router.post("/monetization/requests", status_code=status.HTTP_201_CREATED)
@@ -350,12 +505,14 @@ async def create_monetization_request(payload: MonetizationRequestCreate, backgr
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Este plano é exclusivo para contas empresariais.")
 
     reference = manual_reference("PLAN")
+    is_recurring_plan = payload.request_type in {"company_verified", "safe_point", "company_pro", "event_plan"}
     payment = await payment_instructions(
         COMPANY_PLAN_PRICES.get(payload.request_type, 0),
         reference,
         payload.desired_plan or payload.request_type,
         payload.message or "Solicitação Foundy Empresas",
         str(payload.contact_email).lower() if payload.contact_email else None,
+        recurring=is_recurring_plan,
     )
     response = await (
         supabase.table("monetization_requests")
@@ -374,8 +531,11 @@ async def create_monetization_request(payload: MonetizationRequestCreate, backgr
                 "manual_payment_reference": reference,
                 "payment_provider": payment.get("provider"),
                 "provider_preference_id": payment.get("provider_preference_id"),
+                "provider_subscription_id": payment.get("provider_subscription_id"),
                 "checkout_url": payment.get("checkout_url"),
                 "payment_status": "pending",
+                "subscription_status": "pending" if payment.get("payment_mode") == "recurring" else None,
+                "payment_environment": payment.get("payment_environment"),
             }
         )
         .execute()
@@ -502,6 +662,7 @@ async def create_support_contribution(payload: SupportContributionCreate, backgr
                 "provider_preference_id": payment.get("provider_preference_id"),
                 "checkout_url": payment.get("checkout_url"),
                 "payment_status": "pending",
+                "payment_environment": payment.get("payment_environment"),
                 "payer_name": payload.payer_name.strip() if payload.payer_name else None,
                 "payer_email": str(payload.payer_email).lower() if payload.payer_email else None,
                 "message": payload.message.strip() if payload.message else None,
@@ -626,6 +787,7 @@ async def create_loss_alert_boost(alert_id: UUID, payload: LossAlertBoostCreate,
                 "provider_preference_id": payment.get("provider_preference_id"),
                 "checkout_url": payment.get("checkout_url"),
                 "payment_status": "pending",
+                "payment_environment": payment.get("payment_environment"),
             }
         )
         .execute()
@@ -676,8 +838,10 @@ async def update_loss_alert_boost(boost_id: UUID, payload: AdminLossAlertBoostUp
     boost = current.data[0]
     if payload.status == "active":
         dates = await activate_loss_alert_boost(supabase, boost, payload.admin_usuario_id, payload.admin_notes)
+        regional_count = await _send_boost_regional_emails(supabase, boost)
         await _notify(boost.get("user_id"), "Alerta Ampliado ativado", "Seu alerta de perda foi destacado por tempo limitado.", alerta_id=boost.get("loss_alert_id"))
-        return {"mensagem": "Alerta Ampliado ativado.", **dates}
+        return {"mensagem": f"Alerta Ampliado ativado. E-mails regionais enviados: {regional_count}.", **dates}
+
 
     if payload.status == "cancelled":
         await (

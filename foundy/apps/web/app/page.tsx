@@ -45,6 +45,7 @@ import {
   arquivarAlertaPerdido,
   arquivarItemProprio,
   atualizarPerfil,
+  atualizarLocalizacaoAlertas,
   atualizarStatusCatalogoEmpresa,
   buscarItensAchadosProximos,
   buscarPainelAdmin,
@@ -824,6 +825,7 @@ export default function Home() {
         mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         void carregarItens(ponto.latitude, ponto.longitude, false)
         void carregarPerdas(ponto.latitude, ponto.longitude)
+        if (sessao) void atualizarLocalizacaoAlertas(sessao.usuario_id, ponto.latitude, ponto.longitude).catch(() => undefined)
       },
       () => setMensagemSistema('Não foi possível acessar sua localização. Mantivemos a busca regional padrão.'),
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
@@ -2679,7 +2681,7 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
                 Pontos Seguros são locais físicos, públicos e movimentados. Eles aparecem no mapa com ponto exato e podem ser sugeridos no chat como local seguro de encontro.
               </div>
             )}
-            <Field label="Nome da empresa ou institui??o"><input className="foundy-input" value={empresaNome} onChange={(event) => setEmpresaNome(event.target.value)} placeholder="Ex.: Faculdade Centro Norte" /></Field>
+            <Field label="Nome da empresa ou instituição"><input className="foundy-input" value={empresaNome} onChange={(event) => setEmpresaNome(event.target.value)} placeholder="Ex.: Faculdade Centro Norte" /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="CNPJ"><input className="foundy-input" value={empresaCnpj} onChange={(event) => setEmpresaCnpj(event.target.value)} placeholder="00.000.000/0000-00" /></Field>
               <Field label="CEP"><input className="foundy-input" value={empresaCep} onChange={(event) => setEmpresaCep(event.target.value)} placeholder="00000-000" /></Field>
@@ -2757,15 +2759,20 @@ function ModalBloqueioConta({ sessao, onLogout }: { sessao: FoundySession; onLog
 
 function PaymentInstructions({ payment }: { payment?: ManualPaymentInfo | null }) {
   if (!payment) return null
+  const isRecurring = payment.payment_mode === 'recurring'
+  const environmentLabel = payment.payment_environment === 'test' ? 'Ambiente de teste' : payment.payment_environment === 'production' ? 'Ambiente de produção' : null
   return (
     <div className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm">
-      <p className="font-black text-foundy-green">{payment.checkout_url ? 'Checkout automático disponível' : 'Instruções de pagamento manual'}</p>
+      <p className="font-black text-foundy-green">
+        {payment.checkout_url ? (isRecurring ? 'Assinatura mensal automática disponível' : 'Checkout automático disponível') : 'Instruções de pagamento manual'}
+      </p>
+      {environmentLabel ? <p className="mt-1 text-xs font-bold uppercase tracking-wide text-foundy-muted">{environmentLabel}</p> : null}
       <ul className="mt-3 grid gap-2 text-foundy-muted">
         {payment.instructions.map((line) => <li key={line}>{line}</li>)}
       </ul>
       {payment.checkout_url ? (
         <a className="mt-4 inline-flex h-11 items-center justify-center rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" href={payment.checkout_url} target="_blank" rel="noreferrer">
-          Abrir pagamento seguro
+          {isRecurring ? 'Abrir assinatura segura' : 'Abrir pagamento seguro'}
         </a>
       ) : null}
       <p className="mt-3 rounded-xl border border-foundy-border bg-foundy-background p-3 text-xs text-foundy-muted">
@@ -3121,7 +3128,7 @@ function ModalPerfil({ sessao, painel, onClose, onLogout, onUpdated, onOpenAdmin
 
   async function salvar() {
     try {
-      const atualizado = await atualizarPerfil(sessao.usuario_id, { nome, ocupacao, foto_url: fotoUrl, aceita_notificacoes_email: emailNotifications })
+      const atualizado = await atualizarPerfil(sessao.usuario_id, { nome, ocupacao, foto_url: fotoUrl, aceita_notificacoes_email: emailNotifications, alertas_regionais_email: emailNotifications })
       onUpdated(atualizado)
       setMensagem(atualizado.mensagem)
     } catch (error) {

@@ -483,7 +483,14 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate, background_tasks: Bac
     created["hashtags_ia"] = hashtags_ia_display
     await (
         supabase.table("usuarios")
-        .update({"ultimo_post_em": datetime.now(timezone.utc).isoformat()})
+        .update(
+            {
+                "ultimo_post_em": datetime.now(timezone.utc).isoformat(),
+                "ultima_localizacao_alertas": _wkt_point(longitude_aproximada, latitude_aproximada),
+                "ultima_localizacao_alertas_atualizada_em": datetime.now(timezone.utc).isoformat(),
+                "atualizado_em": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         .eq("id", str(payload.usuario_id))
         .execute()
     )
