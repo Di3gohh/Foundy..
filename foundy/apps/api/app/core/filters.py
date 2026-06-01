@@ -320,7 +320,7 @@ def scan_chat_message(body: str) -> ScanResult:
             blocked=False,
             flagged=True,
             reasons=[
-                "Mensagem sinalizada por mencionar pagamento, cobrança, PIX ou dinheiro dentro do chat de recuperação.",
+                "Mensagem sinalizada por mencionar pagamento, cobrança, PIX ou dinheiro dentro do chat de recuperação. O Foundy também monitora baixo calão, linguagem agressiva, violência e ameaça.",
                 f"Termos financeiros detectados: {', '.join(payment_matches[:4])}.",
             ],
         )

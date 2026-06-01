@@ -53,8 +53,9 @@ async def _send_email(to_email: str, subject: str, body: str) -> bool:
 
 
 async def _send_resend_email(to_email: str, subject: str, body: str) -> bool:
+    from_email = settings.resend_from_email or "Foundy <noreply@foundyapp.com.br>"
     payload = {
-        "from": settings.resend_from_email or settings.smtp_from_email,
+        "from": from_email,
         "to": [to_email],
         "subject": subject,
         "text": body,

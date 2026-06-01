@@ -46,6 +46,11 @@ export type FoundySession = {
   verified_badge?: string
   is_safe_point?: string
   safe_point_status?: string
+  safe_point_latitude?: string
+  safe_point_longitude?: string
+  safe_point_service_days?: string
+  safe_point_clicks?: string
+  public_opening_hours?: string
   public_slug?: string
   banido_permanente?: string
   banido_ate?: string
@@ -146,6 +151,10 @@ export type EmpresaFoundy = {
   public_opening_hours?: string | null
   public_address_visible?: boolean
   custom_logo_url?: string | null
+  safe_point_latitude?: number | null
+  safe_point_longitude?: number | null
+  safe_point_service_days?: string | null
+  safe_point_clicks?: number | null
 }
 
 export type EmpresaCatalogoItem = {
@@ -241,6 +250,9 @@ export type MonetizationPlansResponse = {
 }
 
 export type ManualPaymentInfo = {
+  provider?: 'manual_pix' | 'mercado_pago' | string
+  checkout_url?: string | null
+  provider_preference_id?: string | null
   manual_payment_reference: string
   support_email: string
   support_pix_key?: string | null
@@ -263,6 +275,11 @@ export type MonetizationRequest = {
   updated_at?: string
   reviewed_at?: string | null
   admin_notes?: string | null
+  payment_provider?: string | null
+  provider_preference_id?: string | null
+  provider_payment_id?: string | null
+  checkout_url?: string | null
+  payment_status?: string | null
   usuario_nome?: string | null
   usuario_email?: string | null
   empresa_nome?: string | null
@@ -285,6 +302,11 @@ export type SupportContribution = {
   created_at: string
   confirmed_at?: string | null
   admin_notes?: string | null
+  payment_provider?: string | null
+  provider_preference_id?: string | null
+  provider_payment_id?: string | null
+  checkout_url?: string | null
+  payment_status?: string | null
   usuario_nome?: string | null
   usuario_email?: string | null
   payment?: ManualPaymentInfo
@@ -304,6 +326,11 @@ export type LossAlertBoost = {
   manual_payment_reference?: string | null
   created_at: string
   admin_notes?: string | null
+  payment_provider?: string | null
+  provider_preference_id?: string | null
+  provider_payment_id?: string | null
+  checkout_url?: string | null
+  payment_status?: string | null
   usuario_nome?: string | null
   usuario_email?: string | null
   alerta_titulo?: string | null
@@ -614,7 +641,11 @@ export async function cadastrarUsuario(payload: {
   empresa_catalogo_publico?: boolean
   empresa_cnpj?: string
   empresa_cep?: string
-  company_plan_interest?: 'company_free' | 'company_verified' | 'company_pro' | 'event_plan'
+  company_plan_interest?: 'company_free' | 'company_verified' | 'company_pro' | 'event_plan' | 'safe_point'
+  safe_point_latitude?: number | null
+  safe_point_longitude?: number | null
+  safe_point_service_days?: string | null
+  public_opening_hours?: string | null
 }) {
   return requestJson<{ mensagem: string; email_verificado?: boolean; login_liberado?: boolean }>(
     '/usuarios/cadastrar',
@@ -1067,6 +1098,9 @@ export async function atualizarPerfilPublicoEmpresa(empresaId: string, payload: 
   public_address_visible?: boolean
   custom_cover_url?: string | null
   custom_logo_url?: string | null
+  safe_point_latitude?: number | null
+  safe_point_longitude?: number | null
+  safe_point_service_days?: string | null
 }) {
   return requestJson<{ mensagem: string }>(
     `/companies/${empresaId}/public-profile`,
@@ -1165,5 +1199,13 @@ export async function buscarPontosSegurosFoundy(q?: string) {
     `/companies/safe-points/nearby${suffix}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
     'Não foi possível carregar os Pontos Seguros Foundy.',
+  )
+}
+
+export async function registrarCliquePontoSeguro(empresaId: string) {
+  return requestJson<{ mensagem: string }>(
+    `/companies/safe-points/${empresaId}/click`,
+    { method: 'POST', headers: { Accept: 'application/json' } },
+    'Não foi possível registrar o clique no Ponto Seguro Foundy.',
   )
 }

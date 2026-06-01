@@ -312,7 +312,7 @@ async def marcar_lida(notificacao_id: UUID, payload: MarcarNotificacaoLida) -> d
     supabase = get_supabase()
     notificacao = await (
         supabase.table("notificacoes")
-        .select("id")
+        .select("id,tipo,sala_chat_id,item_achado_id,alerta_perdido_id,reivindicacao_id")
         .eq("id", str(notificacao_id))
         .eq("usuario_id", str(payload.usuario_id))
         .limit(1)
@@ -321,13 +321,26 @@ async def marcar_lida(notificacao_id: UUID, payload: MarcarNotificacaoLida) -> d
     if not notificacao.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notificação não encontrada.")
 
-    await (
+    lida_em = datetime.now(timezone.utc).isoformat()
+    row = notificacao.data[0]
+    update_query = (
         supabase.table("notificacoes")
-        .update({"lida_em": datetime.now(timezone.utc).isoformat()})
-        .eq("id", str(notificacao_id))
+        .update({"lida_em": lida_em})
         .eq("usuario_id", str(payload.usuario_id))
-        .execute()
+        .is_("lida_em", "null")
     )
+    if row.get("sala_chat_id"):
+        update_query = update_query.eq("sala_chat_id", row["sala_chat_id"])
+    elif row.get("reivindicacao_id"):
+        update_query = update_query.eq("reivindicacao_id", row["reivindicacao_id"])
+    elif row.get("item_achado_id"):
+        update_query = update_query.eq("item_achado_id", row["item_achado_id"])
+    elif row.get("alerta_perdido_id"):
+        update_query = update_query.eq("alerta_perdido_id", row["alerta_perdido_id"])
+    else:
+        update_query = update_query.eq("id", str(notificacao_id))
+
+    await update_query.execute()
     return {"mensagem": "Notificação aberta e removida do sininho."}
 
 

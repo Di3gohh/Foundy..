@@ -35,7 +35,11 @@ class UsuarioCadastro(BaseModel):
     empresa_catalogo_publico: bool = True
     empresa_cnpj: str | None = Field(default=None, min_length=14, max_length=20)
     empresa_cep: str | None = Field(default=None, min_length=8, max_length=12)
-    company_plan_interest: Literal["company_free", "company_verified", "company_pro", "event_plan"] = "company_free"
+    company_plan_interest: Literal["company_free", "company_verified", "company_pro", "event_plan", "safe_point"] = "company_free"
+    safe_point_latitude: float | None = Field(default=None, ge=-90, le=90)
+    safe_point_longitude: float | None = Field(default=None, ge=-180, le=180)
+    safe_point_service_days: str | None = Field(default=None, max_length=180)
+    public_opening_hours: str | None = Field(default=None, max_length=240)
 
 
 class UsuarioLogin(BaseModel):
@@ -104,6 +108,11 @@ def _session_payload(usuario: dict) -> dict[str, str]:
         "verified_badge": str(bool(usuario.get("verified_badge", False))).lower(),
         "is_safe_point": str(bool(usuario.get("is_safe_point", False))).lower(),
         "safe_point_status": usuario.get("safe_point_status") or "none",
+        "safe_point_latitude": str(usuario.get("safe_point_latitude") or ""),
+        "safe_point_longitude": str(usuario.get("safe_point_longitude") or ""),
+        "safe_point_service_days": usuario.get("safe_point_service_days") or "",
+        "public_opening_hours": usuario.get("public_opening_hours") or "",
+        "safe_point_clicks": str(usuario.get("safe_point_clicks") or 0),
         "public_slug": usuario.get("public_slug") or "",
         "banido_permanente": str(bool(usuario.get("banido_permanente", False))).lower(),
         "banido_ate": usuario.get("banido_ate") or "",
@@ -189,6 +198,15 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Para conta empresarial, informe nome, CNPJ, CEP, endereço público, cidade e UF da instituição.",
         )
+    if payload.tipo_conta == "empresa" and payload.company_plan_interest == "safe_point" and (
+        payload.safe_point_latitude is None
+        or payload.safe_point_longitude is None
+        or not payload.public_opening_hours
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Para Ponto Seguro Foundy, informe horário de funcionamento e selecione o ponto exato no mapa.",
+        )
 
     supabase = get_supabase()
     email_normalizado = payload.email.lower()
@@ -243,6 +261,12 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
                 "empresa_catalogo_publico": payload.empresa_catalogo_publico,
                 "plan_type": "free",
                 "plan_status": "active" if payload.tipo_conta == "empresa" else "inactive",
+                "is_safe_point": payload.tipo_conta == "empresa" and payload.company_plan_interest == "safe_point",
+                "safe_point_status": "pending" if payload.tipo_conta == "empresa" and payload.company_plan_interest == "safe_point" else "none",
+                "safe_point_latitude": payload.safe_point_latitude,
+                "safe_point_longitude": payload.safe_point_longitude,
+                "safe_point_service_days": payload.safe_point_service_days.strip() if payload.safe_point_service_days else None,
+                "public_opening_hours": payload.public_opening_hours.strip() if payload.public_opening_hours else None,
                 "ultimo_ip_hash": _ip_hash(_client_ip(request)),
             }
         ).execute()
@@ -280,6 +304,9 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
                     "message": "Solicitação criada durante o cadastro empresarial.",
                     "desired_plan": plano_empresa,
                     "admin_notes": f"Referência manual inicial: {reference}",
+                    "manual_payment_reference": reference,
+                    "payment_provider": "manual_pix",
+                    "payment_status": "pending",
                 }
             )
             .execute()
@@ -366,7 +393,8 @@ async def entrar(payload: UsuarioLogin, request: Request) -> dict[str, str]:
             "foto_url,ocupacao,aceita_notificacoes_email,papel,banido_ate,banimento_motivo,"
             "banido_permanente,banimento_tipo,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente,"
             "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
-            "empresa_cnpj,empresa_cep,empresa_verificacao_status,plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,public_slug"
+            "empresa_cnpj,empresa_cep,empresa_verificacao_status,plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,"
+            "safe_point_latitude,safe_point_longitude,safe_point_service_days,safe_point_clicks,public_opening_hours,public_slug"
         )
         .eq("email", payload.email.lower())
         .is_("removido_em", "null")
@@ -433,7 +461,8 @@ async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> di
         .select(
             "id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,"
             "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
-            "plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,public_slug,"
+            "plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,safe_point_latitude,safe_point_longitude,"
+            "safe_point_service_days,safe_point_clicks,public_opening_hours,public_slug,"
             "banido_ate,banimento_motivo,banido_permanente,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente"
         )
         .eq("id", str(usuario_id))

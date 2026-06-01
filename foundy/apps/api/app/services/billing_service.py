@@ -1,3 +1,9 @@
+﻿from __future__ import annotations
+
+import asyncio
+import json
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -34,6 +40,10 @@ LOSS_ALERT_BOOSTS = {
 }
 
 
+class PaymentGatewayError(RuntimeError):
+    pass
+
+
 def money_from_cents(amount_cents: int) -> str:
     value = amount_cents / 100
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -48,10 +58,30 @@ def company_plan_name(plan_type: str | None) -> str:
     return COMPANY_PLAN_NAMES.get(plan_type or "free", COMPANY_PLAN_NAMES["free"])
 
 
-def company_catalog_limit(plan_type: str | None, plan_status: str | None) -> int | None:
+def effective_company_plan(plan_type: str | None, plan_status: str | None) -> str:
     if plan_status != "active":
-        return COMPANY_PLAN_LIMITS["free"]
-    return COMPANY_PLAN_LIMITS.get(plan_type or "free", COMPANY_PLAN_LIMITS["free"])
+        return "free"
+    return plan_type if plan_type in COMPANY_PLAN_LIMITS else "free"
+
+
+def company_catalog_limit(plan_type: str | None, plan_status: str | None) -> int | None:
+    return COMPANY_PLAN_LIMITS[effective_company_plan(plan_type, plan_status)]
+
+
+def company_plan_allows(plan_type: str | None, plan_status: str | None, feature: str) -> bool:
+    plan = effective_company_plan(plan_type, plan_status)
+    rules = {
+        "catalog_search": {"verified", "pro", "event"},
+        "filters": {"verified", "pro", "event"},
+        "qr_code": {"verified", "pro", "event"},
+        "private_catalog": {"verified", "pro", "event"},
+        "history": {"pro", "event"},
+        "reports": {"pro"},
+        "team": {"pro"},
+        "events": {"event"},
+        "event_chat": {"event"},
+    }
+    return plan in rules.get(feature, set())
 
 
 def public_plans() -> dict:
@@ -61,7 +91,7 @@ def public_plans() -> dict:
         "title": "Apoie o Foundy",
         "price": "R$ 3, R$ 5, R$ 10, R$ 20 ou livre",
         "amount_cents": 0,
-        "description": "Contribuição voluntária para manter servidores, segurança, moderação e melhorias da comunidade.",
+        "description": "Contribuição voluntária para manter servidores, segurança, moderação, e-mails e melhorias da comunidade.",
         "benefits": [
             "Ajuda a manter a plataforma gratuita para usuários comuns",
             "Apoia moderação, e-mails transacionais e segurança",
@@ -76,12 +106,13 @@ def public_plans() -> dict:
         "title": "Ponto Seguro Foundy",
         "price": "a partir de R$ 29,90/mês",
         "amount_cents": COMPANY_PLAN_PRICES["safe_point"],
-        "description": "Oferta para locais parceiros que querem receber devoluções em ambiente público, movimentado e orientado pelo Protocolo Foundy.",
+        "description": "Cadastro separado para locais parceiros que querem receber encontros em ambiente público, movimentado e orientado pelo Protocolo Foundy.",
         "benefits": [
             "Selo Ponto Seguro Foundy após análise",
-            "Aparece em áreas de orientação do mapa",
-            "Página pública com endereço de atendimento e horário",
-            "QR Code para balcão, recepção ou mural",
+            "Ponto exato destacado no mapa Foundy",
+            "Página pública com foto, descrição, endereço e horário de funcionamento",
+            "Opção de sugestão dentro do chat seguro",
+            "Painel com contagem de cliques recebidos",
         ],
         "ethical_notice": "O Ponto Seguro não substitui cautela. Encontros continuam sendo responsabilidade dos usuários e devem ocorrer em local público.",
         "cta": "Quero ser um Ponto Seguro",
@@ -94,7 +125,7 @@ def public_plans() -> dict:
         "amount_cents": LOSS_ALERT_BOOSTS["24h"]["amount_cents"],
         "description": "Destaque leve e temporário para alertas de perda criados gratuitamente.",
         "benefits": [
-            "Mais visibilidade no feed de perdas",
+            "Post fica acima dos alertas não turbinados pelo prazo escolhido",
             "Badge de Alerta Ampliado",
             "Duração limitada, transparente e controlada pelo dono do alerta",
         ],
@@ -115,7 +146,7 @@ def public_plans() -> dict:
                 "Página pública da empresa",
                 "Até 5 itens ativos no catálogo",
                 "Badge de empresa cadastrada",
-                "Catálogo visível ou interno, conforme escolha da empresa",
+                "Sem filtros e pesquisa no catálogo",
             ],
             "ethical_notice": "A conta nasce como Básica. Verificação, destaque e recursos avançados dependem de análise manual.",
             "cta": "Criar conta empresarial grátis",
@@ -130,11 +161,13 @@ def public_plans() -> dict:
             "item_limit": COMPANY_PLAN_LIMITS["verified"],
             "description": "Plano para comércios locais que querem mais confiança, análise cadastral, QR Code e catálogo completo.",
             "benefits": [
+                "Todas as vantagens da Empresa Básica",
+                "Até 200 itens ativos no catálogo",
                 "CNPJ analisado pela moderação Foundy",
                 "Selo Empresa Verificada",
                 "QR Code da empresa",
-                "Catálogo completo com maior limite de itens ativos",
-                "Mais destaque na aba Empresas",
+                "Escolha entre página pública e privada",
+                "Filtros e pesquisa liberados no catálogo",
             ],
             "ethical_notice": "O selo informa análise cadastral, não garante o estado dos itens nem substitui retirada presencial segura.",
             "cta": "Quero ser Empresa Verificada",
@@ -149,11 +182,14 @@ def public_plans() -> dict:
             "item_limit": COMPANY_PLAN_LIMITS["pro"],
             "description": "Para escolas, academias, condomínios e instituições que precisam de operação recorrente e histórico robusto.",
             "benefits": [
+                "Todas as vantagens da Empresa Verificada",
                 "Catálogo sem limite fixo de itens ativos",
                 "Histórico de retiradas e arquivamentos",
                 "Relatórios iniciais de operação",
-                "Preparado para múltiplos funcionários na Fase 2",
-                "Status disponível, retirado e arquivado",
+                "Painel completo com utilidades Foundy",
+                "Selo de Empresa Pro dourado",
+                "Nome dourado na aba Empresas quando a página for pública",
+                "Múltiplos funcionários com implantação assistida",
             ],
             "ethical_notice": "Recursos de equipe entram por implantação assistida para evitar acesso indevido ao catálogo institucional.",
             "cta": "Falar sobre Empresa Pro",
@@ -168,10 +204,12 @@ def public_plans() -> dict:
             "item_limit": COMPANY_PLAN_LIMITS["event"],
             "description": "Operação temporária para eventos, feiras, igrejas, clubes e ações com grande circulação de pessoas.",
             "benefits": [
+                "Até 500 itens ativos",
                 "Página temporária do evento",
                 "QR Code do evento",
                 "Painel de atendimento",
-                "Relatório final de itens cadastrados e retirados",
+                "Aba exclusiva de eventos com nome, datas, horários e local",
+                "Chat seguro liberado para operação do evento",
             ],
             "ethical_notice": "Eventos exigem alinhamento prévio de atendimento presencial e política clara de retirada.",
             "cta": "Solicitar plano para evento",
@@ -194,7 +232,7 @@ def public_plans() -> dict:
 
 def manual_payment_instructions(amount_cents: int, reference: str) -> dict:
     instructions = [
-        "Pagamento manual nesta fase de testes.",
+        "Pagamento manual nesta fase quando o gateway ainda não estiver configurado.",
         f"Referência: {reference}",
         f"Valor: {money_from_cents(amount_cents)}",
         f"Contato oficial: {settings.support_email}",
@@ -204,11 +242,83 @@ def manual_payment_instructions(amount_cents: int, reference: str) -> dict:
     else:
         instructions.append("Chave PIX ainda não configurada. Entre em contato pelo e-mail oficial para concluir.")
     return {
+        "provider": "manual_pix",
         "manual_payment_reference": reference,
+        "checkout_url": None,
         "support_email": settings.support_email,
         "support_pix_key": settings.foundy_support_pix_key,
         "instructions": instructions,
         "message": "Solicitação registrada. Aguarde confirmação manual pelo Foundy.",
+    }
+
+
+async def payment_instructions(amount_cents: int, reference: str, title: str, description: str, payer_email: str | None = None) -> dict:
+    if settings.mercado_pago_access_token:
+        try:
+            return await create_mercado_pago_preference(amount_cents, reference, title, description, payer_email)
+        except PaymentGatewayError:
+            # Mantém o usuário destravado caso o provedor esteja temporariamente indisponível.
+            pass
+    return manual_payment_instructions(amount_cents, reference)
+
+
+async def create_mercado_pago_preference(amount_cents: int, reference: str, title: str, description: str, payer_email: str | None = None) -> dict:
+    api_base = (settings.api_public_url or settings.app_public_url).rstrip("/")
+    app_base = settings.app_public_url.rstrip("/")
+    payload: dict[str, object] = {
+        "items": [
+            {
+                "title": title[:120],
+                "description": description[:240],
+                "quantity": 1,
+                "currency_id": "BRL",
+                "unit_price": round(amount_cents / 100, 2),
+            }
+        ],
+        "external_reference": reference,
+        "notification_url": f"{api_base}/payments/mercado-pago/webhook",
+        "back_urls": {
+            "success": f"{app_base}/monetizacao?pagamento=sucesso&referencia={reference}",
+            "failure": f"{app_base}/monetizacao?pagamento=erro&referencia={reference}",
+            "pending": f"{app_base}/monetizacao?pagamento=pendente&referencia={reference}",
+        },
+        "auto_return": "approved",
+    }
+    if payer_email:
+        payload["payer"] = {"email": payer_email}
+
+    request = urllib.request.Request(
+        "https://api.mercadopago.com/checkout/preferences",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {settings.mercado_pago_access_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        raw = await asyncio.to_thread(lambda: urllib.request.urlopen(request, timeout=15).read())
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise PaymentGatewayError("Não foi possível criar preferência no Mercado Pago.") from exc
+
+    response = json.loads(raw.decode("utf-8"))
+    checkout_url = response.get("init_point") or response.get("sandbox_init_point")
+    if not checkout_url:
+        raise PaymentGatewayError("Mercado Pago não retornou link de checkout.")
+    return {
+        "provider": "mercado_pago",
+        "provider_preference_id": response.get("id"),
+        "manual_payment_reference": reference,
+        "checkout_url": checkout_url,
+        "support_email": settings.support_email,
+        "support_pix_key": settings.foundy_support_pix_key,
+        "instructions": [
+            "Pagamento automático via Mercado Pago.",
+            f"Referência: {reference}",
+            f"Valor: {money_from_cents(amount_cents)}",
+            "Abra o checkout e conclua o pagamento. Após aprovação do Mercado Pago, o Foundy libera o benefício automaticamente.",
+        ],
+        "message": "Checkout gerado. Esta janela continuará aberta até você concluir ou cancelar.",
     }
 
 
@@ -218,7 +328,7 @@ def boost_price(boost_type: str) -> dict:
     return LOSS_ALERT_BOOSTS[boost_type]
 
 
-async def activate_company_plan(supabase, company_id: str, request_type: str, admin_id: UUID, manual_reference_value: str | None, notes: str | None) -> None:
+async def activate_company_plan(supabase, company_id: str, request_type: str, admin_id: UUID | str, manual_reference_value: str | None, notes: str | None) -> None:
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(days=30)
     updates = {
@@ -229,7 +339,9 @@ async def activate_company_plan(supabase, company_id: str, request_type: str, ad
         "atualizado_em": now.isoformat(),
     }
 
+    plan_type = None
     if request_type == "company_verified":
+        plan_type = "verified"
         updates.update(
             {
                 "plan_type": "verified",
@@ -242,6 +354,7 @@ async def activate_company_plan(supabase, company_id: str, request_type: str, ad
     elif request_type == "safe_point":
         updates.update({"is_safe_point": True, "safe_point_status": "active"})
     elif request_type == "company_pro":
+        plan_type = "pro"
         updates.update(
             {
                 "plan_type": "pro",
@@ -252,11 +365,30 @@ async def activate_company_plan(supabase, company_id: str, request_type: str, ad
             }
         )
     elif request_type == "event_plan":
-        updates.update({"plan_type": "event", "plan_status": "active"})
+        plan_type = "event"
+        updates.update({"plan_type": "event", "plan_status": "active", "verified_badge": True, "empresa_verificada": True})
     else:
         return
 
     await supabase.table("usuarios").update(updates).eq("id", company_id).execute()
+    if plan_type:
+        await (
+            supabase.table("billing_subscriptions")
+            .insert(
+                {
+                    "company_id": company_id,
+                    "plan_type": plan_type,
+                    "status": "active",
+                    "provider": "manual_or_gateway",
+                    "provider_subscription_id": manual_reference_value,
+                    "current_period_start": now.isoformat(),
+                    "current_period_end": expires_at.isoformat(),
+                    "amount_cents": COMPANY_PLAN_PRICES.get(request_type, 0),
+                    "admin_notes": notes,
+                }
+            )
+            .execute()
+        )
 
 
 async def confirm_support_contribution(supabase, contribution_id: str, admin_id: UUID, notes: str | None) -> None:
@@ -275,7 +407,7 @@ async def confirm_support_contribution(supabase, contribution_id: str, admin_id:
     )
 
 
-async def activate_loss_alert_boost(supabase, boost: dict, admin_id: UUID, notes: str | None) -> dict:
+async def activate_loss_alert_boost(supabase, boost: dict, admin_id: UUID | str, notes: str | None) -> dict:
     plan = boost_price(boost["boost_type"])
     now = datetime.now(timezone.utc)
     ends_at = now + plan["duration"]
@@ -307,7 +439,3 @@ async def activate_loss_alert_boost(supabase, boost: dict, admin_id: UUID, notes
         .execute()
     )
     return {"starts_at": now.isoformat(), "ends_at": ends_at.isoformat()}
-
-
-# TODO Fase 2: adicionar adaptadores Mercado Pago/Stripe com webhooks assinados.
-# TODO Fase 2: renovar assinaturas automaticamente e reconciliar vencimentos via cron.

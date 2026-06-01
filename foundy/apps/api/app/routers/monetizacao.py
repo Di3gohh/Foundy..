@@ -1,9 +1,13 @@
+import asyncio
+import json
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 import re
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.config import settings
@@ -14,9 +18,11 @@ from app.services.billing_service import (
     activate_company_plan,
     activate_loss_alert_boost,
     boost_price,
+    company_plan_allows,
     confirm_support_contribution,
     manual_payment_instructions,
     manual_reference,
+    payment_instructions,
     public_plans,
 )
 from app.services.email_service import send_support_email
@@ -85,6 +91,9 @@ class CompanyPublicProfileUpdate(BaseModel):
     public_address_visible: bool | None = None
     custom_cover_url: str | None = Field(default=None, max_length=5_000_000)
     custom_logo_url: str | None = Field(default=None, max_length=5_000_000)
+    safe_point_latitude: float | None = Field(default=None, ge=-90, le=90)
+    safe_point_longitude: float | None = Field(default=None, ge=-180, le=180)
+    safe_point_service_days: str | None = Field(default=None, max_length=180)
 
 
 class CompanyMemberCreate(BaseModel):
@@ -138,7 +147,10 @@ async def _ensure_user(usuario_id: UUID) -> dict:
     response = await (
         get_supabase()
         .table("usuarios")
-        .select("id,nome,email,tipo_conta,empresa_nome,email_verificado_em,removido_em,plan_type,plan_status")
+        .select(
+            "id,nome,email,tipo_conta,empresa_nome,email_verificado_em,removido_em,plan_type,plan_status,"
+            "is_safe_point,safe_point_status,safe_point_latitude,safe_point_longitude"
+        )
         .eq("id", str(usuario_id))
         .is_("removido_em", "null")
         .limit(1)
@@ -187,6 +199,84 @@ def _with_payment(row: dict, amount_cents: int, prefix: str) -> dict:
     return {**row, "payment": manual_payment_instructions(amount_cents, reference)}
 
 
+async def _fetch_mercado_pago_payment(payment_id: str) -> dict:
+    if not settings.mercado_pago_access_token:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Mercado Pago não configurado.")
+    request = urllib.request.Request(
+        f"https://api.mercadopago.com/v1/payments/{payment_id}",
+        method="GET",
+        headers={"Authorization": f"Bearer {settings.mercado_pago_access_token}"},
+    )
+    try:
+        raw = await asyncio.to_thread(lambda: urllib.request.urlopen(request, timeout=15).read())
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível consultar o pagamento.") from exc
+    return json.loads(raw.decode("utf-8"))
+
+
+async def _fulfill_payment_reference(reference: str, provider_payment_id: str | None = None) -> dict[str, str]:
+    supabase = get_supabase()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    boost = await (
+        supabase.table("loss_alert_boosts")
+        .select("*")
+        .eq("manual_payment_reference", reference)
+        .eq("status", "pending_payment")
+        .limit(1)
+        .execute()
+    )
+    if boost.data:
+        row = boost.data[0]
+        await supabase.table("loss_alert_boosts").update({"payment_status": "approved", "provider_payment_id": provider_payment_id}).eq("id", row["id"]).execute()
+        await activate_loss_alert_boost(supabase, row, "mercado_pago", "Pagamento aprovado automaticamente pelo Mercado Pago.")
+        await _notify(row.get("user_id"), "Alerta Ampliado ativado", "Seu alerta de perda foi turbinado automaticamente após a aprovação do pagamento.", alerta_id=row.get("loss_alert_id"))
+        return {"mensagem": "Boost ativado automaticamente."}
+
+    request_row = await (
+        supabase.table("monetization_requests")
+        .select("*")
+        .eq("manual_payment_reference", reference)
+        .eq("status", "pending")
+        .limit(1)
+        .execute()
+    )
+    if request_row.data:
+        row = request_row.data[0]
+        await (
+            supabase.table("monetization_requests")
+            .update({"status": "approved", "payment_status": "approved", "provider_payment_id": provider_payment_id, "reviewed_at": now_iso, "updated_at": now_iso, "admin_notes": "Pagamento aprovado automaticamente pelo Mercado Pago."})
+            .eq("id", row["id"])
+            .execute()
+        )
+        if row.get("company_id"):
+            await activate_company_plan(supabase, row["company_id"], row["request_type"], "mercado_pago", reference, "Pagamento aprovado automaticamente pelo Mercado Pago.")
+            await _notify(row.get("company_id"), "Plano empresarial ativado", "O pagamento foi aprovado e os benefícios do plano foram liberados automaticamente.")
+        return {"mensagem": "Plano empresarial ativado automaticamente."}
+
+    support = await (
+        supabase.table("support_contributions")
+        .select("*")
+        .eq("manual_payment_reference", reference)
+        .eq("status", "pending")
+        .limit(1)
+        .execute()
+    )
+    if support.data:
+        row = support.data[0]
+        await (
+            supabase.table("support_contributions")
+            .update({"status": "confirmed", "payment_status": "approved", "provider_payment_id": provider_payment_id, "confirmed_at": now_iso, "admin_notes": "Pagamento aprovado automaticamente pelo Mercado Pago."})
+            .eq("id", row["id"])
+            .execute()
+        )
+        if row.get("user_id"):
+            await _notify(row.get("user_id"), "Apoio confirmado", "Obrigado por apoiar o Foundy. O pagamento foi confirmado automaticamente.")
+        return {"mensagem": "Apoio confirmado automaticamente."}
+
+    return {"mensagem": "Referência não encontrada ou já processada."}
+
+
 @router.get("/monetization/plans")
 async def get_monetization_plans() -> dict:
     return public_plans()
@@ -210,6 +300,41 @@ async def get_public_summary() -> dict:
     }
 
 
+@router.post("/payments/mercado-pago/webhook")
+async def mercado_pago_webhook(request: Request) -> dict[str, str]:
+    payload: dict = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    payment_id = (
+        str(payload.get("data", {}).get("id"))
+        if isinstance(payload.get("data"), dict) and payload.get("data", {}).get("id")
+        else request.query_params.get("data.id")
+        or request.query_params.get("id")
+    )
+    topic = payload.get("type") or payload.get("topic") or request.query_params.get("topic")
+    if topic and "payment" not in str(topic):
+        return {"mensagem": "Evento recebido sem ação necessária."}
+    if not payment_id:
+        return {"mensagem": "Webhook recebido sem identificador de pagamento."}
+
+    payment = await _fetch_mercado_pago_payment(payment_id)
+    if payment.get("status") != "approved":
+        reference = payment.get("external_reference")
+        if reference:
+            await get_supabase().table("loss_alert_boosts").update({"payment_status": payment.get("status")}).eq("manual_payment_reference", reference).execute()
+            await get_supabase().table("monetization_requests").update({"payment_status": payment.get("status")}).eq("manual_payment_reference", reference).execute()
+            await get_supabase().table("support_contributions").update({"payment_status": payment.get("status")}).eq("manual_payment_reference", reference).execute()
+        return {"mensagem": "Pagamento recebido, ainda não aprovado."}
+
+    reference = payment.get("external_reference")
+    if not reference:
+        return {"mensagem": "Pagamento aprovado sem referência Foundy."}
+    return await _fulfill_payment_reference(str(reference), str(payment_id))
+
+
 @router.post("/monetization/requests", status_code=status.HTTP_201_CREATED)
 async def create_monetization_request(payload: MonetizationRequestCreate, background_tasks: BackgroundTasks) -> dict:
     if not payload.user_id and not payload.company_id:
@@ -225,6 +350,13 @@ async def create_monetization_request(payload: MonetizationRequestCreate, backgr
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Este plano é exclusivo para contas empresariais.")
 
     reference = manual_reference("PLAN")
+    payment = await payment_instructions(
+        COMPANY_PLAN_PRICES.get(payload.request_type, 0),
+        reference,
+        payload.desired_plan or payload.request_type,
+        payload.message or "Solicitação Foundy Empresas",
+        str(payload.contact_email).lower() if payload.contact_email else None,
+    )
     response = await (
         supabase.table("monetization_requests")
         .insert(
@@ -238,7 +370,12 @@ async def create_monetization_request(payload: MonetizationRequestCreate, backgr
                 "contact_phone": payload.contact_phone.strip() if payload.contact_phone else None,
                 "message": payload.message.strip() if payload.message else None,
                 "desired_plan": payload.desired_plan or payload.request_type,
-                "admin_notes": f"Referência manual inicial: {reference}",
+                "admin_notes": f"Referência inicial: {reference}",
+                "manual_payment_reference": reference,
+                "payment_provider": payment.get("provider"),
+                "provider_preference_id": payment.get("provider_preference_id"),
+                "checkout_url": payment.get("checkout_url"),
+                "payment_status": "pending",
             }
         )
         .execute()
@@ -262,7 +399,7 @@ async def create_monetization_request(payload: MonetizationRequestCreate, backgr
     return {
         **row,
         "mensagem": "Solicitação recebida. O Foundy vai analisar e responder pelo contato oficial.",
-        "payment": manual_payment_instructions(COMPANY_PLAN_PRICES.get(payload.request_type, 0), reference),
+        "payment": payment,
     }
 
 
@@ -303,6 +440,14 @@ async def update_admin_monetization_request(request_id: UUID, payload: AdminMone
     if not current.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitação não encontrada.")
     row = current.data[0]
+    if payload.status == "cancelled":
+        await supabase.table("monetization_requests").delete().eq("id", str(request_id)).execute()
+        await _notify(
+            row.get("company_id") or row.get("user_id"),
+            "Solicitação cancelada",
+            f"Sua solicitação foi cancelada e removida dos registros pendentes. Observação: {payload.admin_notes or 'sem observação.'}",
+        )
+        return {"mensagem": "Solicitação cancelada e excluída permanentemente."}
     now_iso = datetime.now(timezone.utc).isoformat()
     updates = {
         "status": payload.status,
@@ -336,6 +481,13 @@ async def create_support_contribution(payload: SupportContributionCreate, backgr
     if payload.user_id:
         await _ensure_user(payload.user_id)
     reference = manual_reference("APOIO")
+    payment = await payment_instructions(
+        payload.amount_cents,
+        reference,
+        "Apoie o Foundy",
+        payload.message or "Contribuição voluntária para manter o Foundy ativo.",
+        str(payload.payer_email).lower() if payload.payer_email else None,
+    )
     response = await (
         get_supabase()
         .table("support_contributions")
@@ -346,6 +498,10 @@ async def create_support_contribution(payload: SupportContributionCreate, backgr
                 "status": "pending",
                 "payment_method": payload.payment_method,
                 "manual_payment_reference": reference,
+                "payment_provider": payment.get("provider"),
+                "provider_preference_id": payment.get("provider_preference_id"),
+                "checkout_url": payment.get("checkout_url"),
+                "payment_status": "pending",
                 "payer_name": payload.payer_name.strip() if payload.payer_name else None,
                 "payer_email": str(payload.payer_email).lower() if payload.payer_email else None,
                 "message": payload.message.strip() if payload.message else None,
@@ -364,7 +520,7 @@ async def create_support_contribution(payload: SupportContributionCreate, backgr
     return {
         **row,
         "mensagem": "Recebemos sua intenção de apoio. Conclua manualmente pelo contato oficial.",
-        "payment": manual_payment_instructions(payload.amount_cents, reference),
+        "payment": payment,
     }
 
 
@@ -397,6 +553,12 @@ async def update_support_contribution(contribution_id: UUID, payload: AdminSuppo
     current = await supabase.table("support_contributions").select("*").eq("id", str(contribution_id)).limit(1).execute()
     if not current.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Apoio não encontrado.")
+    if payload.status == "cancelled":
+        user_id = current.data[0].get("user_id")
+        await supabase.table("support_contributions").delete().eq("id", str(contribution_id)).execute()
+        if user_id:
+            await _notify(user_id, "Apoio cancelado", "O pedido de apoio foi cancelado e removido dos registros pendentes.")
+        return {"mensagem": "Apoio cancelado e excluído permanentemente."}
     if payload.status == "confirmed":
         await confirm_support_contribution(supabase, str(contribution_id), payload.admin_usuario_id, payload.admin_notes)
     else:
@@ -443,6 +605,13 @@ async def create_loss_alert_boost(alert_id: UUID, payload: LossAlertBoostCreate,
 
     plan = boost_price(payload.boost_type)
     reference = manual_reference("BOOST")
+    payment = await payment_instructions(
+        plan["amount_cents"],
+        reference,
+        f"Alerta Ampliado Foundy {payload.boost_type}",
+        f"Destaque temporário para o alerta {alert_row.get('titulo')}",
+        None,
+    )
     created = await (
         supabase.table("loss_alert_boosts")
         .insert(
@@ -453,6 +622,10 @@ async def create_loss_alert_boost(alert_id: UUID, payload: LossAlertBoostCreate,
                 "status": "pending_payment",
                 "amount_cents": plan["amount_cents"],
                 "manual_payment_reference": reference,
+                "payment_provider": payment.get("provider"),
+                "provider_preference_id": payment.get("provider_preference_id"),
+                "checkout_url": payment.get("checkout_url"),
+                "payment_status": "pending",
             }
         )
         .execute()
@@ -466,8 +639,8 @@ async def create_loss_alert_boost(alert_id: UUID, payload: LossAlertBoostCreate,
     )
     return {
         **created.data[0],
-        "mensagem": "Alerta Ampliado solicitado. O destaque entra no ar após confirmação manual.",
-        "payment": manual_payment_instructions(plan["amount_cents"], reference),
+        "mensagem": "Alerta Ampliado solicitado. O destaque entra no ar após a confirmação do pagamento.",
+        "payment": payment,
     }
 
 
@@ -506,6 +679,17 @@ async def update_loss_alert_boost(boost_id: UUID, payload: AdminLossAlertBoostUp
         await _notify(boost.get("user_id"), "Alerta Ampliado ativado", "Seu alerta de perda foi destacado por tempo limitado.", alerta_id=boost.get("loss_alert_id"))
         return {"mensagem": "Alerta Ampliado ativado.", **dates}
 
+    if payload.status == "cancelled":
+        await (
+            supabase.table("alertas_perdidos")
+            .update({"boost_ativo": False, "boost_expira_em": None, "boost_tipo": None, "atualizado_em": datetime.now(timezone.utc).isoformat()})
+            .eq("id", boost["loss_alert_id"])
+            .execute()
+        )
+        await supabase.table("loss_alert_boosts").delete().eq("id", str(boost_id)).execute()
+        await _notify(boost.get("user_id"), "Alerta Ampliado cancelado", "O pedido de destaque foi cancelado e removido dos registros pendentes.", alerta_id=boost.get("loss_alert_id"))
+        return {"mensagem": "Pedido de Alerta Ampliado cancelado e excluído permanentemente."}
+
     await (
         supabase.table("loss_alert_boosts")
         .update({"status": payload.status, "admin_notes": payload.admin_notes})
@@ -531,7 +715,8 @@ async def list_safe_points(q: str | None = Query(default=None, max_length=80)) -
         .select(
             "id,nome,foto_url,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,"
             "empresa_verificada,verified_badge,is_safe_point,safe_point_status,public_slug,public_description,"
-            "public_opening_hours,public_address_visible,custom_logo_url"
+            "public_opening_hours,public_address_visible,custom_logo_url,safe_point_latitude,safe_point_longitude,"
+            "safe_point_service_days,safe_point_clicks,plan_type,plan_status"
         )
         .eq("tipo_conta", "empresa")
         .eq("is_safe_point", True)
@@ -546,6 +731,25 @@ async def list_safe_points(q: str | None = Query(default=None, max_length=80)) -
     return response.data
 
 
+@router.post("/companies/safe-points/{company_id}/click")
+async def register_safe_point_click(company_id: UUID) -> dict[str, str]:
+    supabase = get_supabase()
+    current = await (
+        supabase.table("usuarios")
+        .select("id,safe_point_clicks,is_safe_point,safe_point_status")
+        .eq("id", str(company_id))
+        .eq("tipo_conta", "empresa")
+        .is_("removido_em", "null")
+        .limit(1)
+        .execute()
+    )
+    if not current.data or not current.data[0].get("is_safe_point") or current.data[0].get("safe_point_status") != "active":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ponto Seguro não encontrado.")
+    clicks = int(current.data[0].get("safe_point_clicks") or 0) + 1
+    await supabase.table("usuarios").update({"safe_point_clicks": clicks, "atualizado_em": datetime.now(timezone.utc).isoformat()}).eq("id", str(company_id)).execute()
+    return {"mensagem": "Clique registrado para o Ponto Seguro Foundy."}
+
+
 @router.get("/companies/{company_id}/public-profile")
 async def get_company_public_profile(company_id: UUID) -> dict:
     response = await (
@@ -555,7 +759,8 @@ async def get_company_public_profile(company_id: UUID) -> dict:
             "id,nome,tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,"
             "empresa_verificada,empresa_catalogo_publico,verified_badge,is_safe_point,safe_point_status,plan_type,"
             "plan_status,public_slug,public_description,public_whatsapp,public_email,public_opening_hours,"
-            "public_address_visible,custom_cover_url,custom_logo_url"
+            "public_address_visible,custom_cover_url,custom_logo_url,safe_point_latitude,safe_point_longitude,"
+            "safe_point_service_days,safe_point_clicks"
         )
         .eq("id", str(company_id))
         .eq("tipo_conta", "empresa")
@@ -570,8 +775,14 @@ async def get_company_public_profile(company_id: UUID) -> dict:
 
 @router.patch("/companies/{company_id}/public-profile")
 async def update_company_public_profile(company_id: UUID, payload: CompanyPublicProfileUpdate) -> dict:
-    await _ensure_company_owner(company_id, payload.usuario_id)
+    company = await _ensure_company_owner(company_id, payload.usuario_id)
     updates = payload.model_dump(exclude={"usuario_id"}, exclude_unset=True)
+    advanced_public_fields = {"public_address_visible", "custom_cover_url", "custom_logo_url"}
+    if advanced_public_fields.intersection(updates) and not company_plan_allows(company.get("plan_type"), company.get("plan_status"), "private_catalog") and not company.get("is_safe_point"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Personalização avançada da página pública exige Empresa Verificada, Pro, Evento ou Ponto Seguro ativo.")
+    safe_point_fields = {"safe_point_latitude", "safe_point_longitude", "safe_point_service_days"}
+    if safe_point_fields.intersection(updates) and not company.get("is_safe_point"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Dados de ponto exato são exclusivos para Pontos Seguros Foundy.")
     if "public_email" in updates and updates["public_email"] is not None:
         updates["public_email"] = str(updates["public_email"]).lower()
     if "public_slug" in updates and updates["public_slug"]:
@@ -583,7 +794,8 @@ async def update_company_public_profile(company_id: UUID, payload: CompanyPublic
 
 @router.get("/companies/{company_id}/reports/summary")
 async def get_company_report_summary(company_id: UUID, usuario_id: UUID = Query(...)) -> dict:
-    await _ensure_company_owner(company_id, usuario_id)
+    company = await _ensure_company_owner(company_id, usuario_id)
+    _ensure_company_plan(company, {"pro"}, "Relatórios operacionais exigem Empresa Pro ativa.")
     response = await (
         get_supabase()
         .table("empresa_catalogo_itens")
@@ -611,7 +823,9 @@ async def get_company_report_summary(company_id: UUID, usuario_id: UUID = Query(
 
 @router.get("/companies/{company_id}/qr-code")
 async def get_company_qr_code(company_id: UUID, usuario_id: UUID = Query(...)) -> dict:
-    await _ensure_company_owner(company_id, usuario_id)
+    company = await _ensure_company_owner(company_id, usuario_id)
+    if not company.get("is_safe_point"):
+        _ensure_company_plan(company, {"verified", "pro", "event"}, "QR Code exige Empresa Verificada, Pro, Evento ou Ponto Seguro ativo.")
     company = await get_company_public_profile(company_id)
     slug = company.get("public_slug") or str(company_id)
     url = f"{settings.app_public_url.rstrip('/')}/empresas/{slug}"
@@ -743,7 +957,8 @@ async def get_company_by_slug(slug: str) -> dict:
             "id,nome,foto_url,tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,"
             "empresa_verificada,empresa_catalogo_publico,verified_badge,is_safe_point,safe_point_status,plan_type,"
             "plan_status,public_slug,public_description,public_whatsapp,public_email,public_opening_hours,"
-            "public_address_visible,custom_cover_url,custom_logo_url"
+            "public_address_visible,custom_cover_url,custom_logo_url,safe_point_latitude,safe_point_longitude,"
+            "safe_point_service_days,safe_point_clicks"
         )
         .eq("tipo_conta", "empresa")
         .eq("empresa_catalogo_publico", True)

@@ -95,10 +95,15 @@ import {
   buscarPlanosMonetizacao,
   buscarQrCodeEmpresa,
   buscarRelatorioEmpresa,
+  buscarPontosSegurosFoundy,
   criarApoioFoundy,
+  criarEventoEmpresa,
   criarSolicitacaoMonetizacao,
+  listarEventosEmpresa,
   marcarItemCatalogoRetirado,
+  registrarCliquePontoSeguro,
   solicitarBoostAlerta,
+  type CompanyEventPlan,
   type LossAlertBoost,
   type ManualPaymentInfo,
   type MonetizationPlan,
@@ -340,9 +345,9 @@ const companyPlanFallbacks: MonetizationPlan[] = [
     price: 'Grátis',
     amount_cents: 0,
     item_limit: 5,
-    description: 'Para pequenos comércios começarem a organizar achados e perdidos.',
-    benefits: ['Página pública', 'Até 5 itens ativos', 'Badge de empresa cadastrada', 'Catálogo público ou interno'],
-    ethical_notice: 'A conta começa como Básica. Recursos pagos dependem de análise manual.',
+    description: 'Entrada gratuita para pequenos comércios começarem a organizar achados e perdidos no Foundy.',
+    benefits: ['Página pública da empresa', 'Até 5 itens ativos no catálogo', 'Badge de empresa cadastrada', 'Sem filtros e pesquisa no catálogo'],
+    ethical_notice: 'A conta nasce como Básica. Verificação, destaque e recursos avançados dependem de análise manual.',
     cta: 'Criar conta empresarial grátis',
   },
   {
@@ -353,8 +358,8 @@ const companyPlanFallbacks: MonetizationPlan[] = [
     price: 'R$ 49,90/mês',
     amount_cents: 4990,
     item_limit: 200,
-    description: 'CNPJ analisado, selo de confiança, QR Code e catálogo completo.',
-    benefits: ['Selo Empresa Verificada', 'QR Code da empresa', 'Maior limite de itens', 'Mais destaque na aba Empresas'],
+    description: 'Plano para comércios locais que querem mais confiança, análise cadastral, QR Code e catálogo completo.',
+    benefits: ['Todas as vantagens da Empresa Básica', 'Até 200 itens ativos', 'CNPJ analisado pela moderação Foundy', 'Selo Empresa Verificada', 'QR Code da empresa', 'Escolha entre página pública e privada', 'Filtros e pesquisa liberados no catálogo'],
     ethical_notice: 'O selo não substitui retirada presencial segura nem garante estado de conservação.',
     cta: 'Quero ser Empresa Verificada',
   },
@@ -366,8 +371,8 @@ const companyPlanFallbacks: MonetizationPlan[] = [
     price: 'R$ 99,90 a R$ 149,90/mês',
     amount_cents: 9990,
     item_limit: null,
-    description: 'Para escolas, academias, condomínios e instituições com operação recorrente.',
-    benefits: ['Catálogo sem limite fixo', 'Histórico e relatórios', 'Status retirado/disponível', 'Implantação assistida de equipe'],
+    description: 'Para escolas, academias, condomínios e instituições que precisam de operação recorrente e histórico robusto.',
+    benefits: ['Todas as vantagens da Empresa Verificada', 'Catálogo sem limite fixo de itens ativos', 'Histórico de retiradas e arquivamentos', 'Relatórios iniciais de operação', 'Painel completo com todas as utilidades Foundy', 'Selo de Empresa Pro dourado', 'Nome dourado na aba Empresas quando pública'],
     ethical_notice: 'Recursos de equipe são ativados com implantação assistida para proteger o catálogo.',
     cta: 'Falar sobre Empresa Pro',
   },
@@ -379,8 +384,8 @@ const companyPlanFallbacks: MonetizationPlan[] = [
     price: 'R$ 199 a R$ 499 por evento/mês',
     amount_cents: 19900,
     item_limit: 500,
-    description: 'Para eventos, feiras, igrejas, clubes e ações temporárias.',
-    benefits: ['Página temporária', 'QR Code do evento', 'Painel de atendimento', 'Relatório final'],
+    description: 'Operação temporária para eventos, feiras, igrejas, clubes e ações com grande circulação de pessoas.',
+    benefits: ['Até 500 itens ativos', 'Página temporária do evento', 'QR Code do evento', 'Painel de atendimento', 'Aba exclusiva de eventos com nome, datas, horários e local', 'Chat seguro liberado'],
     ethical_notice: 'Eventos exigem política clara de retirada presencial e atendimento no local.',
     cta: 'Solicitar plano para evento',
   },
@@ -442,6 +447,25 @@ function alertaParaMapa(alerta: LostAlert): ItemAchado {
 
 function isAdmin(session: FoundySession | null) {
   return session?.email?.toLowerCase() === supportEmail
+}
+
+function effectiveCompanyPlan(session: FoundySession | null) {
+  if (!session || session.plan_status !== 'active') return 'free'
+  return session.plan_type === 'verified' || session.plan_type === 'pro' || session.plan_type === 'event' ? session.plan_type : 'free'
+}
+
+function companyPlanAllows(session: FoundySession | null, feature: 'catalogSearch' | 'qr' | 'reports' | 'history' | 'team' | 'events' | 'privateCatalog') {
+  const plan = effectiveCompanyPlan(session)
+  const rules = {
+    catalogSearch: ['verified', 'pro', 'event'],
+    qr: ['verified', 'pro', 'event'],
+    reports: ['pro'],
+    history: ['pro', 'event'],
+    team: ['pro'],
+    events: ['event'],
+    privateCatalog: ['verified', 'pro', 'event'],
+  }
+  return rules[feature].includes(plan)
 }
 
 function categoriaFromFiltro(filtro: ItemFilter): ItemCategory {
@@ -508,6 +532,7 @@ export default function Home() {
   const [denunciaDisponivel, setDenunciaDisponivel] = useState(false)
   const [adminData, setAdminData] = useState<AdminData | null>(null)
   const [empresas, setEmpresas] = useState<EmpresaFoundy[]>([])
+  const [pontosSeguros, setPontosSeguros] = useState<EmpresaFoundy[]>([])
   const [empresaBusca, setEmpresaBusca] = useState('')
   const [empresaSelecionada, setEmpresaSelecionada] = useState<EmpresaFoundy | null>(null)
   const [catalogoEmpresa, setCatalogoEmpresa] = useState<EmpresaCatalogoItem[]>([])
@@ -571,6 +596,15 @@ export default function Home() {
     }
   }, [])
 
+  const carregarPontosSeguros = useCallback(async (termo?: string) => {
+    try {
+      const lista = await buscarPontosSegurosFoundy(termo)
+      setPontosSeguros(lista)
+    } catch {
+      setPontosSeguros([])
+    }
+  }, [])
+
   const carregarPlanosMonetizacao = useCallback(async () => {
     try {
       const dados = await buscarPlanosMonetizacao()
@@ -583,6 +617,7 @@ export default function Home() {
   useEffect(() => {
     void carregarItens()
     void carregarPerdas()
+    void carregarPontosSeguros()
     const stored = localStorage.getItem(sessionStorageKey)
     if (stored) {
       try {
@@ -599,15 +634,36 @@ export default function Home() {
       localStorage.setItem(firstVisitKey, '1')
       setModalAtivo('auth')
     }
-  }, [carregarItens, carregarPainel, carregarPerdas])
+  }, [carregarItens, carregarPainel, carregarPerdas, carregarPontosSeguros])
 
   useEffect(() => {
     if (activeTab === 'empresas') void carregarEmpresas(empresaBusca)
   }, [activeTab, carregarEmpresas, empresaBusca])
 
   useEffect(() => {
+    if (activeTab === 'mapa' || modalAtivo === 'chat') void carregarPontosSeguros()
+  }, [activeTab, carregarPontosSeguros, modalAtivo])
+
+  useEffect(() => {
     if (activeTab === 'monetizacao') void carregarPlanosMonetizacao()
   }, [activeTab, carregarPlanosMonetizacao])
+
+  useEffect(() => {
+    if (modalAtivo !== 'chat' || !salaChatId || !painel?.chats?.length) return
+    const atualizado = painel.chats.find((chat) => chat.id === salaChatId)
+    if (!atualizado) return
+    setChatAtual((atual) => {
+      if (
+        atual?.id === atualizado.id &&
+        atual?.atualizado_em === atualizado.atualizado_em &&
+        atual?.ultima_mensagem === atualizado.ultima_mensagem &&
+        atual?.status === atualizado.status
+      ) {
+        return atual
+      }
+      return atualizado
+    })
+  }, [modalAtivo, painel?.chats, salaChatId])
 
   useEffect(() => {
     if (!sessao) return
@@ -710,7 +766,14 @@ export default function Home() {
       if (!bateFiltro) return false
       if (!termo) return true
       return textoPesquisavelItem(alerta).includes(termo)
-    }).sort((a, b) => Number(Boolean(b.boost_ativo)) - Number(Boolean(a.boost_ativo)) || new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
+    }).sort((a, b) => {
+      const boostOrder = Number(Boolean(b.boost_ativo && isFutureDate(b.boost_expira_em ?? undefined))) - Number(Boolean(a.boost_ativo && isFutureDate(a.boost_expira_em ?? undefined)))
+      if (boostOrder !== 0) return boostOrder
+      const distanceA = typeof a.distancia_metros === 'number' ? a.distancia_metros : Number.POSITIVE_INFINITY
+      const distanceB = typeof b.distancia_metros === 'number' ? b.distancia_metros : Number.POSITIVE_INFINITY
+      if (distanceA !== distanceB) return distanceA - distanceB
+      return new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime()
+    })
   }, [buscaTexto, filtro, perdasProximas])
 
   const mapaItens = useMemo(
@@ -958,7 +1021,7 @@ export default function Home() {
       setChatFeedback('Mensagem enviada e registrada na conversa.')
       setDenunciaDisponivel((atual) => atual || enviada.denunciar_extorsao_visivel)
       void listarMensagensChat(salaChatId, sessao.usuario_id)
-        .then((dados) => setMensagensChat(dados))
+        .then((dados) => setMensagensChat((atuais) => mergeChatMessages(atuais, dados)))
         .catch(() => undefined)
       void carregarPainel(sessao)
     } catch (error) {
@@ -1180,6 +1243,7 @@ export default function Home() {
             viewMode={activeTab === 'mapa' ? 'mapa' : 'feed'}
             itens={activeTab === 'mapa' ? mapaItens : itensFiltrados}
             perdas={perdasFiltradas}
+            pontosSeguros={pontosSeguros}
             feedMode={feedMode}
             totalItens={itens.length}
             totalPerdas={perdasProximas.length}
@@ -1193,13 +1257,19 @@ export default function Home() {
             getDistance={getDistance}
             onSelectItem={setItemSelecionado}
             onViewItem={verItemNoFeed}
+            onOpenSafePoint={async (empresa) => {
+              await registrarCliquePontoSeguro(empresa.id).catch(() => undefined)
+              setActiveTab('empresas')
+              setEmpresaSelecionada(empresa)
+              void abrirEmpresa(empresa)
+            }}
             onFeedModeChange={setFeedMode}
             onCarregarPlanos={carregarPlanosMonetizacao}
             onOpenLossPost={() => requireSession('perdi', 'Para criar alerta de perda é necessário entrar.')}
             onRequestSafePoint={() => {
               const plan = getSafePointPlan(planosMonetizacao)
               if (!sessao || sessao.tipo_conta !== 'empresa') {
-                setMensagemSistema('Ponto Seguro Foundy é uma oferta para conta empresarial. Crie ou entre com uma conta de empresa para solicitar.')
+                setMensagemSistema('Ponto Seguro Foundy agora possui cadastro próprio. Clique em Cadastrar e escolha "Ponto Seguro".')
                 setModalAtivo('auth')
                 return
               }
@@ -1285,9 +1355,15 @@ export default function Home() {
           chat={chatAtual}
           chatCarregando={chatCarregando}
           mensagens={mensagensChat}
+          pontosSeguros={pontosSeguros}
           feedback={chatFeedback}
           valorAtual={mensagemChatAtual}
           onChangeValor={setMensagemChatAtual}
+          onSuggestSafePoint={(empresa) => {
+            const nome = empresa.empresa_nome ?? empresa.nome
+            const endereco = empresa.empresa_endereco_publico ?? 'endereço público informado no perfil'
+            setMensagemChatAtual(`Podemos combinar em um Ponto Seguro Foundy? Sugestão: ${nome}, ${endereco}. Horário: ${empresa.public_opening_hours ?? 'consultar perfil'}.`)
+          }}
           onEnviar={() => void enviarMensagemNoChat()}
           onDenunciar={(motivo, prova, arquivo, mensagemId) => salaChatId && sessao ? void denunciarExtorsao(salaChatId, sessao.usuario_id, motivo, mensagemId, prova, arquivo).then((res) => { setMensagemSistema(res.mensagem); setChatFeedback(res.mensagem); setChatAtual((atual) => (atual ? { ...atual, status: 'encerrado' } : atual)); setModalAtivo(null); void carregarPainel(sessao) }) : undefined}
           denunciarDisponivel={denunciaDisponivel}
@@ -1329,6 +1405,7 @@ function RadarSection({
   viewMode,
   itens,
   perdas,
+  pontosSeguros,
   feedMode,
   totalItens,
   totalPerdas,
@@ -1355,6 +1432,7 @@ function RadarSection({
   onReportItem,
   onReportLoss,
   onViewItem,
+  onOpenSafePoint,
   onFeedModeChange,
   feedItemRefs,
   currentUserId,
@@ -1362,6 +1440,7 @@ function RadarSection({
   viewMode: 'feed' | 'mapa'
   itens: ItemAchado[]
   perdas: LostAlert[]
+  pontosSeguros: EmpresaFoundy[]
   feedMode: FeedMode
   totalItens: number
   totalPerdas: number
@@ -1375,6 +1454,7 @@ function RadarSection({
   getDistance: (item: ItemAchado) => number | null
   onSelectItem: (item: ItemAchado) => void
   onViewItem: (item: ItemAchado) => void
+  onOpenSafePoint: (empresa: EmpresaFoundy) => void
   onFeedModeChange: (mode: FeedMode) => void
   onCarregarPlanos: () => void
   onOpenLossPost: () => void
@@ -1418,7 +1498,7 @@ function RadarSection({
           </div>
         </div>
 
-        {viewMode === 'mapa' ? <MapaInterativo itens={itens} itemSelecionado={itemSelecionado} onSelecionarItem={onSelectItem} onVerItem={onViewItem} userLocation={localUsuario} /> : null}
+        {viewMode === 'mapa' ? <MapaInterativo itens={itens} pontosSeguros={pontosSeguros} itemSelecionado={itemSelecionado} onSelecionarItem={onSelectItem} onVerItem={onViewItem} onVerPontoSeguro={onOpenSafePoint} userLocation={localUsuario} /> : null}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-foundy-border bg-foundy-background/70 p-4">
           <p className="text-sm text-foundy-muted" aria-live="polite">{mensagemSistema}</p>
           <button className="foundy-pressable inline-flex h-10 items-center gap-2 rounded-xl border border-foundy-border px-3 text-sm font-semibold" type="button" onClick={onRefresh}>
@@ -1589,22 +1669,19 @@ function LostAlertCard({
   const categoria = alerta.categoria ?? 'outros'
   const CategoriaIcon = categorias[categoria].Icon
   const isOwner = Boolean(currentUserId && alerta.usuario_id === currentUserId)
+  const boosted = Boolean(alerta.boost_ativo && isFutureDate(alerta.boost_expira_em ?? undefined))
   return (
-    <article ref={refCallback} className="foundy-item-card cursor-pointer overflow-hidden rounded-3xl border border-red-400/20 bg-foundy-surface" role="button" tabIndex={0} onClick={() => onDetails(alerta)} onKeyDown={(event) => { if (event.key === 'Enter') onDetails(alerta) }}>
-      <div className="relative h-48 overflow-hidden">
-        <img src={alerta.imagem_url ?? placeholdersPorCategoria[categoria]} alt={`Imagem do alerta ${alerta.titulo}`} className="h-full w-full object-cover" />
-        <div className="absolute inset-0 bg-gradient-to-t from-red-950/80 via-black/20 to-transparent" />
-        <div className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full bg-red-500 px-3 py-1 text-xs font-black text-white">
-          Procurando
-        </div>
-        {alerta.boost_ativo ? <div className="absolute left-3 top-12 inline-flex items-center gap-2 rounded-full bg-foundy-green px-3 py-1 text-xs font-black text-slate-950"><Sparkles size={13} /> Alerta ampliado</div> : null}
-        <div className="absolute bottom-3 right-3 rounded-full bg-foundy-blue px-3 py-1 text-xs font-bold text-white">{formatDistance(alerta.distancia_metros ?? null)}</div>
-      </div>
+    <article ref={refCallback} className={`foundy-item-card cursor-pointer overflow-hidden rounded-3xl border bg-foundy-surface ${boosted ? 'border-foundy-green/50 shadow-foundy-green/10' : 'border-red-400/20'}`} role="button" tabIndex={0} onClick={() => onDetails(alerta)} onKeyDown={(event) => { if (event.key === 'Enter') onDetails(alerta) }}>
       <div className="grid gap-3 p-4 sm:p-5">
-        <div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-2 rounded-full bg-red-500 px-3 py-1 text-xs font-black text-white"><MapPin size={13} /> Procurando</span>
+          {boosted ? <span className="inline-flex items-center gap-2 rounded-full bg-foundy-green px-3 py-1 text-xs font-black text-slate-950"><Sparkles size={13} /> Alerta ampliado</span> : null}
+          <span className="rounded-full bg-foundy-blue px-3 py-1 text-xs font-bold text-white">{formatDistance(alerta.distancia_metros ?? null)}</span>
+        </div>
+        <div className="rounded-3xl border border-red-400/20 bg-gradient-to-br from-red-500/15 via-foundy-background to-foundy-blue/10 p-4">
           <p className="inline-flex items-center gap-2 rounded-full bg-foundy-blue/15 px-3 py-1 text-xs font-bold text-foundy-blue"><CategoriaIcon size={14} /> {categorias[categoria].label}</p>
-          <h3 className="mt-3 text-lg font-black">{alerta.titulo}</h3>
-          <p className="text-sm text-foundy-muted">{alerta.local_descricao ?? 'Região aproximada protegida'}</p>
+          <h3 className="mt-3 text-2xl font-black">{alerta.titulo}</h3>
+          <p className="mt-2 text-sm text-foundy-muted">{alerta.local_descricao ?? 'Região aproximada protegida'}</p>
         </div>
         <p className="text-sm leading-6 text-foundy-muted">{alerta.descricao}</p>
         <div className="flex flex-wrap gap-2">
@@ -1641,7 +1718,7 @@ function ModalDetalhePost({
   onBoost: (alerta: LostAlert) => void
 }) {
   const categoria = item.categoria ?? 'outros'
-  const imageUrl = item.imagem_url ?? placeholdersPorCategoria[categoria]
+  const imageUrl = item.imagem_url ?? (tipo === 'achado' ? placeholdersPorCategoria[categoria] : null)
   const isOwner = Boolean(currentUserId && item.usuario_id === currentUserId)
   const isFound = tipo === 'achado'
   const subcategoria = item.subcategoria ? (filtrosFoundy[item.subcategoria as ItemFilter]?.label ?? item.subcategoria) : null
@@ -1650,7 +1727,15 @@ function ModalDetalhePost({
     <ModalBase titulo={isFound ? 'Detalhes do item achado' : 'Detalhes do alerta de perda'} subtitulo="Confira a imagem maior, localização aproximada e informações principais." onClose={onClose} large>
       <div className="grid gap-5 p-4 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="overflow-hidden rounded-3xl border border-foundy-border bg-foundy-background">
-          <img src={imageUrl} alt={`Imagem de ${item.titulo}`} className="max-h-[68dvh] w-full object-contain bg-black/20" />
+          {imageUrl ? <img src={imageUrl} alt={`Imagem de ${item.titulo}`} className="max-h-[68dvh] w-full object-contain bg-black/20" /> : (
+            <div className="grid min-h-72 place-items-center bg-gradient-to-br from-red-500/15 via-foundy-background to-foundy-blue/10 p-6 text-center">
+              <div>
+                <MapPin className="mx-auto text-red-100" size={42} />
+                <h3 className="mt-3 text-xl font-black">Alerta de perda sem foto pública</h3>
+                <p className="mt-2 text-sm leading-6 text-foundy-muted">Para evitar exposição indevida, posts de perda priorizam descrição, categoria e região aproximada.</p>
+              </div>
+            </div>
+          )}
         </div>
         <section className="grid content-start gap-4">
           <div className="rounded-3xl border border-foundy-border bg-foundy-background p-5">
@@ -1912,19 +1997,28 @@ function EmpresasSection({
         <input className="w-full bg-transparent outline-none" value={busca} onChange={(event) => onBuscaChange(event.target.value)} placeholder="Pesquisar empresa, cidade ou instituição..." />
       </div>
       <div className="grid gap-4 md:grid-cols-2">
-        {empresas.map((empresa) => (
-          <button className="foundy-pressable rounded-3xl border border-foundy-border bg-foundy-surface p-5 text-left" key={empresa.id} type="button" onClick={() => onSelecionarEmpresa(empresa)}>
-            <div className="flex items-start gap-4">
-              {empresa.foto_url ? <img src={empresa.foto_url} alt="" className="size-14 rounded-2xl object-cover" /> : <span className="grid size-14 place-items-center rounded-2xl bg-foundy-blue/20 text-foundy-blue"><Building2 size={24} /></span>}
-              <div>
-                <p className="text-xs font-black uppercase tracking-wide text-foundy-green">{empresa.empresa_verificada ? 'Empresa verificada' : 'Catálogo empresarial'}</p>
-                <h2 className="mt-1 text-xl font-black">{empresa.empresa_nome ?? empresa.nome}</h2>
-                <p className="mt-1 text-sm text-foundy-muted">{empresa.empresa_cidade}{empresa.empresa_uf ? `/${empresa.empresa_uf}` : ''}</p>
+        {empresas.map((empresa) => {
+          const pro = empresa.plan_status === 'active' && empresa.plan_type === 'pro'
+          const verified = pro || (empresa.plan_status === 'active' && empresa.plan_type === 'verified') || empresa.empresa_verificada
+          return (
+            <button className={`foundy-pressable rounded-3xl border bg-foundy-surface p-5 text-left ${pro ? 'border-amber-300/60 shadow-lg shadow-amber-950/20' : 'border-foundy-border'}`} key={empresa.id} type="button" onClick={() => onSelecionarEmpresa(empresa)}>
+              <div className="flex items-start gap-4">
+                {empresa.foto_url ? <img src={empresa.foto_url} alt="" className="size-14 rounded-2xl object-cover" /> : <span className={`grid size-14 place-items-center rounded-2xl ${pro ? 'bg-amber-300/20 text-amber-200' : 'bg-foundy-blue/20 text-foundy-blue'}`}><Building2 size={24} /></span>}
+                <div>
+                  <p className={`text-xs font-black uppercase tracking-wide ${pro ? 'text-amber-200' : 'text-foundy-green'}`}>{pro ? 'Empresa Pro dourada' : verified ? 'Empresa verificada' : empresa.is_safe_point ? 'Ponto Seguro Foundy' : 'Catálogo empresarial'}</p>
+                  <h2 className={`mt-1 text-xl font-black ${pro ? 'text-amber-100' : ''}`}>{empresa.empresa_nome ?? empresa.nome}</h2>
+                  <p className="mt-1 text-sm text-foundy-muted">{empresa.empresa_cidade}{empresa.empresa_uf ? `/${empresa.empresa_uf}` : ''}</p>
+                </div>
               </div>
-            </div>
-            <p className="mt-4 text-sm leading-6 text-foundy-muted">{empresa.empresa_descricao ?? 'Clique para ver o catálogo público de itens disponíveis.'}</p>
-          </button>
-        ))}
+              <p className="mt-4 text-sm leading-6 text-foundy-muted">{empresa.empresa_descricao ?? 'Clique para ver o catálogo público de itens disponíveis.'}</p>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
+                {empresa.is_safe_point ? <span className="rounded-full bg-foundy-green/15 px-3 py-1 text-foundy-green">Ponto Seguro</span> : null}
+                {verified ? <span className="rounded-full bg-foundy-blue/15 px-3 py-1 text-foundy-blue">Selo ativo</span> : null}
+                {pro ? <span className="rounded-full bg-amber-300 px-3 py-1 text-slate-950">Pro</span> : null}
+              </div>
+            </button>
+          )
+        })}
       </div>
       {empresas.length === 0 ? <EmptyState title="Nenhuma empresa encontrada" text="Quando uma instituição criar uma conta empresarial, ela aparecerá aqui." /> : null}
       <CompanyPlansOffer
@@ -1974,8 +2068,9 @@ function CompanyPlansOffer({
               {plan.item_limit === null ? 'Itens ativos: sem limite fixo' : plan.item_limit ? `Itens ativos: até ${plan.item_limit}` : 'Entrada gratuita'}
             </p>
             <ul className="mt-3 grid gap-2 text-xs text-foundy-muted">
-              {plan.benefits.slice(0, 3).map((benefit) => <li key={benefit}>- {benefit}</li>)}
+              {plan.benefits.map((benefit) => <li className="flex gap-2" key={benefit}><CheckCircle2 className="mt-0.5 shrink-0 text-foundy-green" size={13} /> <span>{benefit}</span></li>)}
             </ul>
+            <p className="mt-3 rounded-2xl border border-amber-300/30 bg-amber-500/10 p-3 text-xs font-bold text-amber-100">{plan.ethical_notice}</p>
             <button className="mt-4 h-10 w-full rounded-xl bg-foundy-blue text-xs font-black text-white" type="button" onClick={() => (plan.id === 'company_free' ? onCriarEmpresa() : onSolicitarPlano(plan))}>{plan.cta}</button>
           </article>
         ))}
@@ -2017,14 +2112,35 @@ function EmpresaPainelSection({
   const [publicSlug, setPublicSlug] = useState(sessao.public_slug || '')
   const [publicDescription, setPublicDescription] = useState(sessao.empresa_descricao || '')
   const [publicHours, setPublicHours] = useState('')
+  const [safePointDaysPanel, setSafePointDaysPanel] = useState('')
+  const [safePointCoordsPanel, setSafePointCoordsPanel] = useState<GeoPoint>({
+    latitude: Number(sessao.safe_point_latitude) || defaultPoint.latitude,
+    longitude: Number(sessao.safe_point_longitude) || defaultPoint.longitude,
+  })
+  const [safePointClicks, setSafePointClicks] = useState(Number(sessao.safe_point_clicks) || 0)
   const [publicAddressVisible, setPublicAddressVisible] = useState(false)
   const [qrLink, setQrLink] = useState('')
   const [relatorio, setRelatorio] = useState<{ total_itens: number; total_retirados: number; total_disponiveis: number; taxa_retirada: number } | null>(null)
+  const [eventos, setEventos] = useState<CompanyEventPlan[]>([])
+  const [eventoTitulo, setEventoTitulo] = useState('')
+  const [eventoDescricao, setEventoDescricao] = useState('')
+  const [eventoLocal, setEventoLocal] = useState('')
+  const [eventoEndereco, setEventoEndereco] = useState('')
+  const [eventoInicio, setEventoInicio] = useState('')
+  const [eventoFim, setEventoFim] = useState('')
+  const [eventosMensagem, setEventosMensagem] = useState('Eventos ficam disponíveis apenas para o plano Eventos e Instituições ativo.')
   const categoriaAtual = categoriaFromFiltro(categoriaCatalogo)
   const companyPlans = getCompanyPlans(planos)
+  const plan = effectiveCompanyPlan(sessao)
+  const isSafePointAccount = sessao.is_safe_point === 'true'
+  const canUseCatalogSearch = companyPlanAllows(sessao, 'catalogSearch')
+  const canUseQr = isSafePointAccount || companyPlanAllows(sessao, 'qr')
+  const canUseReports = companyPlanAllows(sessao, 'reports')
+  const canUseHistory = companyPlanAllows(sessao, 'history')
+  const canUseEvents = companyPlanAllows(sessao, 'events')
 
   const carregar = useCallback(async () => {
-    const lista = await listarCatalogoEmpresa(sessao.usuario_id, '')
+      const lista = await listarCatalogoEmpresa(sessao.usuario_id, '')
     setItens(lista)
   }, [sessao.usuario_id])
 
@@ -2038,10 +2154,31 @@ function EmpresaPainelSection({
       setPublicDescription(perfil.public_description ?? perfil.empresa_descricao ?? '')
       setPublicHours(perfil.public_opening_hours ?? '')
       setPublicAddressVisible(Boolean(perfil.public_address_visible))
+      setSafePointDaysPanel(perfil.safe_point_service_days ?? '')
+      setSafePointClicks(Number(perfil.safe_point_clicks ?? 0))
+      if (typeof perfil.safe_point_latitude === 'number' && typeof perfil.safe_point_longitude === 'number') {
+        setSafePointCoordsPanel({ latitude: perfil.safe_point_latitude, longitude: perfil.safe_point_longitude })
+      }
     }).catch(() => undefined)
   }, [sessao.usuario_id])
 
-  async function solicitarMonetizacaoEmpresa(requestType: 'company_verified' | 'safe_point' | 'company_pro') {
+  const carregarEventos = useCallback(async () => {
+    if (!canUseEvents) {
+      setEventos([])
+      return
+    }
+    const lista = await listarEventosEmpresa(sessao.usuario_id, sessao.usuario_id)
+    setEventos(lista)
+    setEventosMensagem(lista.length ? 'Eventos carregados para operação assistida.' : 'Nenhum evento criado ainda.')
+  }, [canUseEvents, sessao.usuario_id])
+
+  useEffect(() => {
+    void carregarEventos().catch((error) => {
+      setEventosMensagem(error instanceof Error ? error.message : 'Não foi possível carregar os eventos.')
+    })
+  }, [carregarEventos])
+
+  async function solicitarMonetizacaoEmpresa(requestType: 'company_verified' | 'safe_point' | 'company_pro' | 'event_plan') {
     try {
       const resposta = await criarSolicitacaoMonetizacao({
         user_id: sessao.usuario_id,
@@ -2066,6 +2203,11 @@ function EmpresaPainelSection({
         public_description: publicDescription,
         public_opening_hours: publicHours,
         public_address_visible: publicAddressVisible,
+        ...(isSafePointAccount ? {
+          safe_point_latitude: safePointCoordsPanel.latitude,
+          safe_point_longitude: safePointCoordsPanel.longitude,
+          safe_point_service_days: safePointDaysPanel,
+        } : {}),
       })
       setMonetizacaoMensagem(resposta.mensagem)
     } catch (error) {
@@ -2075,13 +2217,15 @@ function EmpresaPainelSection({
 
   async function carregarMateriaisEmpresa() {
     try {
-      const [qr, resumo] = await Promise.all([
-        buscarQrCodeEmpresa(sessao.usuario_id, sessao.usuario_id),
-        buscarRelatorioEmpresa(sessao.usuario_id, sessao.usuario_id),
-      ])
-      setQrLink(qr.url)
-      setRelatorio(resumo)
-      setMonetizacaoMensagem('QR Code e relatório inicial carregados.')
+      if (!canUseQr && !canUseReports) {
+        setMonetizacaoMensagem('Seu plano atual não libera QR Code nem relatório. Solicite Empresa Verificada para QR Code ou Empresa Pro para relatórios.')
+        return
+      }
+      const qr = canUseQr ? await buscarQrCodeEmpresa(sessao.usuario_id, sessao.usuario_id) : null
+      const resumo = canUseReports ? await buscarRelatorioEmpresa(sessao.usuario_id, sessao.usuario_id) : null
+      if (qr) setQrLink(qr.url)
+      if (resumo) setRelatorio(resumo)
+      setMonetizacaoMensagem('Materiais liberados para o seu plano carregados.')
     } catch (error) {
       setMonetizacaoMensagem(error instanceof Error ? error.message : 'Não foi possível carregar materiais empresariais.')
     }
@@ -2111,7 +2255,7 @@ function EmpresaPainelSection({
         subcategoria: categoriaCatalogo,
         codigo_interno: codigo,
         local_armazenamento: local,
-        imagem_url: isDocumentSensitiveFilter(categoriaCatalogo) ? null : imagemUrl || null,
+        imagem_url: isDocumentSensitiveFilter(categoriaCatalogo) || hasDocumentPrivacyHint(titulo, descricao, filtrosFoundy[categoriaCatalogo].label) ? null : imagemUrl || null,
       })
       setTitulo('')
       setDescricao('')
@@ -2149,10 +2293,42 @@ function EmpresaPainelSection({
     }
   }
 
+  async function criarEvento() {
+    if (!canUseEvents) {
+      setEventosMensagem('Criação de evento exige o plano Eventos e Instituições ativo.')
+      return
+    }
+    if (eventoTitulo.trim().length < 3) {
+      setEventosMensagem('Informe o nome do evento.')
+      return
+    }
+    try {
+      const criado = await criarEventoEmpresa(sessao.usuario_id, {
+        usuario_id: sessao.usuario_id,
+        title: eventoTitulo,
+        description: eventoDescricao || null,
+        location_name: eventoLocal || null,
+        address: eventoEndereco || null,
+        starts_at: eventoInicio ? new Date(eventoInicio).toISOString() : null,
+        ends_at: eventoFim ? new Date(eventoFim).toISOString() : null,
+      })
+      setEventosMensagem(criado.mensagem ?? 'Evento criado para operação assistida.')
+      setEventoTitulo('')
+      setEventoDescricao('')
+      setEventoLocal('')
+      setEventoEndereco('')
+      setEventoInicio('')
+      setEventoFim('')
+      await carregarEventos()
+    } catch (error) {
+      setEventosMensagem(error instanceof Error ? error.message : 'Não foi possível criar o evento.')
+    }
+  }
+
   const itensVisiveis = itens.filter((item) => {
-    const statusOk = statusCatalogo === 'todos' || item.status === statusCatalogo
-    const categoriaOk = categoriaFiltroCatalogo === 'todos' || item.subcategoria === categoriaFiltroCatalogo || item.categoria === categoriaFromFiltro(categoriaFiltroCatalogo)
-    const termo = buscaCatalogo.trim().toLowerCase()
+    const statusOk = !canUseHistory ? item.status === 'disponivel' : statusCatalogo === 'todos' || item.status === statusCatalogo
+    const categoriaOk = !canUseCatalogSearch || categoriaFiltroCatalogo === 'todos' || item.subcategoria === categoriaFiltroCatalogo || item.categoria === categoriaFromFiltro(categoriaFiltroCatalogo)
+    const termo = canUseCatalogSearch ? buscaCatalogo.trim().toLowerCase() : ''
     const texto = `${item.titulo} ${item.descricao} ${item.categoria} ${item.subcategoria ?? ''} ${item.codigo_interno ?? ''} ${item.local_armazenamento ?? ''}`.toLowerCase()
     return statusOk && categoriaOk && (!termo || texto.includes(termo))
   })
@@ -2164,9 +2340,11 @@ function EmpresaPainelSection({
         <h1 className="mt-2 text-3xl font-black">{sessao.empresa_nome || sessao.nome}</h1>
         <p className="mt-2 text-sm leading-6 text-foundy-muted">Catálogo interno para achados e perdidos. Sem chat, sem desafio do dono e sem geolocalização.</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          {sessao.verified_badge === 'true' || sessao.plan_status === 'active' ? <span className="rounded-full bg-foundy-green px-3 py-1 text-xs font-black text-slate-950">Empresa Verificada</span> : null}
+          {plan === 'pro' ? <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">Empresa Pro Dourada</span> : null}
+          {plan === 'verified' ? <span className="rounded-full bg-foundy-green px-3 py-1 text-xs font-black text-slate-950">Empresa Verificada</span> : null}
+          {plan === 'event' ? <span className="rounded-full bg-foundy-blue px-3 py-1 text-xs font-black text-white">Eventos e Instituições</span> : null}
           {sessao.is_safe_point === 'true' ? <span className="rounded-full bg-foundy-blue px-3 py-1 text-xs font-black text-white">Ponto Seguro Foundy</span> : null}
-          <span className="rounded-full border border-foundy-border px-3 py-1 text-xs font-bold text-foundy-muted">Plano: {sessao.plan_type ?? 'free'}</span>
+          <span className="rounded-full border border-foundy-border px-3 py-1 text-xs font-bold text-foundy-muted">Plano efetivo: {plan}</span>
         </div>
       </div>
       <div className="grid gap-4 rounded-3xl border border-foundy-border bg-foundy-surface p-4 lg:grid-cols-[1fr_1fr]">
@@ -2179,7 +2357,9 @@ function EmpresaPainelSection({
           <div className="flex flex-wrap gap-2">
             <button className="rounded-xl bg-foundy-blue px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void solicitarMonetizacaoEmpresa('company_verified')}>Solicitar verificação</button>
             <button className="rounded-xl border border-foundy-green/50 px-3 py-2 text-xs font-black text-foundy-green" type="button" onClick={() => void solicitarMonetizacaoEmpresa('safe_point')}>Quero ser Ponto Seguro</button>
-            <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => void carregarMateriaisEmpresa()}>QR Code e relatório</button>
+            <button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void solicitarMonetizacaoEmpresa('company_pro')}>Solicitar Pro</button>
+            <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => void solicitarMonetizacaoEmpresa('event_plan')}>Plano Eventos</button>
+            <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => void carregarMateriaisEmpresa()}>Materiais liberados</button>
           </div>
           {qrLink ? <div className="rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><p className="font-black">Link público/QR</p><a className="mt-1 block break-all text-foundy-blue underline" href={qrLink} target="_blank">{qrLink}</a><p className="mt-2 text-xs text-foundy-muted">Encontrou ou perdeu algo aqui? Acesse o Foundy.</p></div> : null}
           {relatorio ? <div className="grid gap-2 sm:grid-cols-4"><Metric label="Itens" value={String(relatorio.total_itens)} /><Metric label="Disponíveis" value={String(relatorio.total_disponiveis)} /><Metric label="Retirados" value={String(relatorio.total_retirados)} /><Metric label="Taxa" value={`${relatorio.taxa_retirada}%`} /></div> : null}
@@ -2190,6 +2370,15 @@ function EmpresaPainelSection({
           <Field label="Descrição pública"><textarea className="foundy-input min-h-20" value={publicDescription} onChange={(event) => setPublicDescription(event.target.value)} /></Field>
           <Field label="Horário de funcionamento"><input className="foundy-input" value={publicHours} onChange={(event) => setPublicHours(event.target.value)} placeholder="Ex.: Seg a Sex, 8h às 18h" /></Field>
           <label className="flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><input checked={publicAddressVisible} onChange={(event) => setPublicAddressVisible(event.target.checked)} type="checkbox" /> Exibir endereço público de retirada.</label>
+          {isSafePointAccount ? (
+            <div className="grid gap-3 rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-3">
+              <p className="font-black text-foundy-green">Painel Ponto Seguro Foundy</p>
+              <Metric label="Cliques recebidos" value={String(safePointClicks)} />
+              <Field label="Dias de funcionamento"><input className="foundy-input" value={safePointDaysPanel} onChange={(event) => setSafePointDaysPanel(event.target.value)} placeholder="Ex.: Segunda a sábado" /></Field>
+              <MapaPerimetro center={safePointCoordsPanel} radius={70} onCenterChange={setSafePointCoordsPanel} />
+              <p className="text-xs text-foundy-muted">Este ponto aparece de forma destacada no mapa e pode ser sugerido no chat seguro.</p>
+            </div>
+          ) : null}
           <button className="h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={() => void salvarPerfilPublicoEmpresa()}>Salvar página pública</button>
         </div>
       </div>
@@ -2201,6 +2390,51 @@ function EmpresaPainelSection({
         onCriarEmpresa={() => setMonetizacaoMensagem('Sua Empresa Básica já está ativa. Ela permite até 5 itens disponíveis no catálogo.')}
         onSolicitarPlano={onSolicitarPlano}
       />
+      <div className={`grid gap-4 rounded-3xl border p-4 ${canUseEvents ? 'border-foundy-blue/30 bg-foundy-blue/10' : 'border-foundy-border bg-foundy-surface'}`}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-wide text-foundy-blue">Eventos e Instituições</p>
+            <h2 className="text-xl font-black">Operação temporária de achados e perdidos</h2>
+            <p className="mt-1 text-sm leading-6 text-foundy-muted">{eventosMensagem}</p>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-xs font-black ${canUseEvents ? 'bg-foundy-blue text-white' : 'border border-foundy-border text-foundy-muted'}`}>
+            {canUseEvents ? 'Liberado no seu plano' : 'Exclusivo do plano Eventos'}
+          </span>
+        </div>
+        {canUseEvents ? (
+          <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+            <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-surface p-4">
+              <Field label="Nome do evento"><input className="foundy-input" value={eventoTitulo} onChange={(event) => setEventoTitulo(event.target.value)} placeholder="Ex.: Feira Cultural Foundy" /></Field>
+              <Field label="Descrição"><textarea className="foundy-input min-h-20" value={eventoDescricao} onChange={(event) => setEventoDescricao(event.target.value)} placeholder="Explique como será a retirada presencial." /></Field>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Nome do local"><input className="foundy-input" value={eventoLocal} onChange={(event) => setEventoLocal(event.target.value)} placeholder="Ex.: Ginásio principal" /></Field>
+                <Field label="Endereço público"><input className="foundy-input" value={eventoEndereco} onChange={(event) => setEventoEndereco(event.target.value)} placeholder="Ex.: Rua, número e bairro" /></Field>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Início"><input className="foundy-input" type="datetime-local" value={eventoInicio} onChange={(event) => setEventoInicio(event.target.value)} /></Field>
+                <Field label="Fim"><input className="foundy-input" type="datetime-local" value={eventoFim} onChange={(event) => setEventoFim(event.target.value)} /></Field>
+              </div>
+              <button className="h-11 rounded-xl bg-foundy-blue text-sm font-black text-white" type="button" onClick={() => void criarEvento()}>Criar evento assistido</button>
+            </div>
+            <PanelList title="Eventos cadastrados" empty="Nenhum evento criado ainda.">
+              {eventos.map((evento) => (
+                <article className="rounded-2xl border border-foundy-border bg-foundy-surface p-4" key={evento.id}>
+                  <p className="text-sm font-black">{evento.title}</p>
+                  <p className="mt-1 text-xs text-foundy-muted">{evento.location_name || 'Local não informado'} - {evento.status}</p>
+                  <p className="mt-2 text-sm leading-6 text-foundy-muted">{evento.description || 'Sem descrição.'}</p>
+                  <p className="mt-2 text-xs text-foundy-muted">
+                    {evento.starts_at ? new Date(evento.starts_at).toLocaleString('pt-BR') : 'Início não informado'} até {evento.ends_at ? new Date(evento.ends_at).toLocaleString('pt-BR') : 'fim não informado'}
+                  </p>
+                </article>
+              ))}
+            </PanelList>
+          </div>
+        ) : (
+          <p className="rounded-2xl border border-amber-300/30 bg-amber-500/10 p-4 text-sm leading-6 text-amber-100">
+            O plano Eventos libera página temporária, QR Code do evento, painel de atendimento, até 500 itens ativos e chat seguro operacional. Empresas Básicas, Verificadas e Pro não recebem esta aba funcional.
+          </p>
+        )}
+      </div>
       <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl font-black">Meu catálogo</h2>
@@ -2227,7 +2461,7 @@ function EmpresaPainelSection({
           <button className="h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={() => void criar()}>Publicar no catálogo</button>
         </div>
       ) : null}
-      <div className="grid gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4 md:grid-cols-[1fr_auto]">
+      {canUseCatalogSearch ? <div className="grid gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4 md:grid-cols-[1fr_auto]">
         <div className="foundy-search-input flex items-center gap-3 rounded-2xl border border-foundy-border bg-foundy-background px-4 py-3">
           <Search size={18} />
           <input className="w-full bg-transparent outline-none" value={buscaCatalogo} onChange={(event) => setBuscaCatalogo(event.target.value)} placeholder="Buscar por código, título, descrição ou armário..." />
@@ -2241,7 +2475,7 @@ function EmpresaPainelSection({
         <select className="foundy-input md:w-56" value={categoriaFiltroCatalogo} onChange={(event) => setCategoriaFiltroCatalogo(event.target.value as ItemFilter)}>
           {(Object.entries(filtrosFoundy) as [ItemFilter, (typeof filtrosFoundy)[ItemFilter]][]).map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}
         </select>
-      </div>
+      </div> : <div className="rounded-3xl border border-amber-300/30 bg-amber-500/10 p-4 text-sm text-amber-100"><strong>Plano Básico:</strong> filtros e pesquisa do catálogo ficam bloqueados. Solicite Empresa Verificada para liberar busca, filtros e QR Code.</div>}
       <PanelList title="Itens do catálogo" empty="Nenhum item encontrado com estes filtros.">
         {itensVisiveis.map((item) => (
           <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[120px_1fr_auto]" key={item.id}>
@@ -2254,8 +2488,8 @@ function EmpresaPainelSection({
               {item.status === 'retirado' ? <p className="mt-2 rounded-xl border border-foundy-green/30 bg-foundy-green/10 p-2 text-xs text-foundy-green">Retirado por {item.retirado_por_nome ?? 'não informado'} em {item.retirado_em ? new Date(item.retirado_em).toLocaleString('pt-BR') : 'data não informada'}.</p> : null}
             </div>
             <div className="flex flex-wrap content-start gap-2">
-              {item.status !== 'retirado' ? <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => { setRetiradaItemId(item.id); setRetiradoPor(''); setRetiradoEm(new Date().toISOString().slice(0, 16)) }}>Retirado</button> : null}
-              <button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-bold text-red-200" type="button" onClick={() => void mudarStatus(item.id, 'arquivado')}>Arquivar</button>
+              {canUseHistory && item.status !== 'retirado' ? <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => { setRetiradaItemId(item.id); setRetiradoPor(''); setRetiradoEm(new Date().toISOString().slice(0, 16)) }}>Retirado</button> : null}
+              {canUseHistory ? <button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-bold text-red-200" type="button" onClick={() => void mudarStatus(item.id, 'arquivado')}>Arquivar</button> : <span className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold text-foundy-muted">Histórico no Pro</span>}
             </div>
           </div>
         ))}
@@ -2330,7 +2564,7 @@ function ModalBase({ titulo, subtitulo, onClose, children, large = false }: { ti
 
 function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao: FoundySession) => void; onClose: () => void }) {
   const [modo, setModo] = useState<'entrar' | 'cadastrar'>('cadastrar')
-  const [tipoConta, setTipoConta] = useState<'pessoal' | 'empresa'>('pessoal')
+  const [tipoConta, setTipoConta] = useState<'pessoal' | 'empresa' | 'ponto_seguro'>('pessoal')
   const [nome, setNome] = useState('')
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
@@ -2347,6 +2581,9 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
   const [empresaCep, setEmpresaCep] = useState('')
   const [empresaCatalogoPublico, setEmpresaCatalogoPublico] = useState(true)
   const [empresaPlanoInteresse, setEmpresaPlanoInteresse] = useState<'company_free' | 'company_verified' | 'company_pro' | 'event_plan'>('company_free')
+  const [safePointHours, setSafePointHours] = useState('')
+  const [safePointDays, setSafePointDays] = useState('')
+  const [safePointCoords, setSafePointCoords] = useState<GeoPoint>(defaultPoint)
   const [mensagem, setMensagem] = useState('Crie sua conta para publicar, conversar e receber alertas.')
   const [enviando, setEnviando] = useState(false)
 
@@ -2354,7 +2591,8 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
     if (!email.includes('@')) return setMensagem('Informe um e-mail válido.')
     if (senha.length < 8) return setMensagem('A senha precisa ter pelo menos 8 caracteres.')
     if (modo === 'cadastrar' && nome.trim().length < 2) return setMensagem('Informe seu nome.')
-    if (modo === 'cadastrar' && tipoConta === 'empresa' && (!empresaNome.trim() || !empresaEndereco.trim() || !empresaCidade.trim() || empresaUf.trim().length !== 2 || empresaCnpj.replace(/\D/g, '').length !== 14 || empresaCep.replace(/\D/g, '').length !== 8)) return setMensagem('Informe nome, CNPJ, CEP, endereço público, cidade e UF da instituição para solicitar a conta empresarial.')
+    if (modo === 'cadastrar' && tipoConta !== 'pessoal' && (!empresaNome.trim() || !empresaEndereco.trim() || !empresaCidade.trim() || empresaUf.trim().length !== 2 || empresaCnpj.replace(/\D/g, '').length !== 14 || empresaCep.replace(/\D/g, '').length !== 8)) return setMensagem('Informe nome, CNPJ, CEP, endereço público, cidade e UF da instituição.')
+    if (modo === 'cadastrar' && tipoConta === 'ponto_seguro' && !safePointHours.trim()) return setMensagem('Informe o horário de funcionamento do Ponto Seguro Foundy.')
     if (modo === 'cadastrar' && (!maior || !termos || !termosLidos)) return setMensagem('Leia as diretrizes, confirme maioridade e aceite os termos para continuar.')
 
     setEnviando(true)
@@ -2367,8 +2605,8 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
           maior_de_idade: maior,
           aceitou_termos: termos,
           aceita_notificacoes_email: emailNotificacoes,
-          tipo_conta: tipoConta,
-          ...(tipoConta === 'empresa'
+          tipo_conta: tipoConta === 'ponto_seguro' ? 'empresa' : tipoConta,
+          ...(tipoConta !== 'pessoal'
             ? {
                 empresa_nome: empresaNome,
                 empresa_descricao: empresaDescricao,
@@ -2377,8 +2615,12 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
                 empresa_uf: empresaUf,
                 empresa_cnpj: empresaCnpj,
                 empresa_cep: empresaCep,
-                empresa_catalogo_publico: empresaCatalogoPublico,
-                company_plan_interest: empresaPlanoInteresse,
+                empresa_catalogo_publico: tipoConta === 'ponto_seguro' ? true : empresaCatalogoPublico,
+                company_plan_interest: tipoConta === 'ponto_seguro' ? 'safe_point' : empresaPlanoInteresse,
+                safe_point_latitude: tipoConta === 'ponto_seguro' ? safePointCoords.latitude : null,
+                safe_point_longitude: tipoConta === 'ponto_seguro' ? safePointCoords.longitude : null,
+                safe_point_service_days: tipoConta === 'ponto_seguro' ? safePointDays : null,
+                public_opening_hours: tipoConta === 'ponto_seguro' ? safePointHours : null,
               }
             : {}),
         })
@@ -2402,44 +2644,67 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
           <button className={`rounded-xl px-3 py-2 text-sm font-bold ${modo === 'cadastrar' ? 'bg-foundy-blue text-white' : 'text-foundy-muted'}`} type="button" onClick={() => setModo('cadastrar')}>Cadastrar</button>
         </div>
         {modo === 'cadastrar' ? (
-          <div className="grid grid-cols-2 gap-2 rounded-2xl border border-foundy-border bg-foundy-background p-1">
-            <button className={`rounded-xl px-3 py-2 text-sm font-black ${tipoConta === 'pessoal' ? 'bg-foundy-green text-slate-950' : 'text-foundy-muted'}`} type="button" onClick={() => setTipoConta('pessoal')}>Pessoa física</button>
-            <button className={`rounded-xl px-3 py-2 text-sm font-black ${tipoConta === 'empresa' ? 'bg-foundy-green text-slate-950' : 'text-foundy-muted'}`} type="button" onClick={() => setTipoConta('empresa')}>Empresa</button>
+          <div className="grid grid-cols-3 gap-2 rounded-2xl border border-foundy-border bg-foundy-background p-1">
+            <button className={`rounded-xl px-3 py-2 text-xs font-black sm:text-sm ${tipoConta === 'pessoal' ? 'bg-foundy-green text-slate-950' : 'text-foundy-muted'}`} type="button" onClick={() => setTipoConta('pessoal')}>Pessoa física</button>
+            <button className={`rounded-xl px-3 py-2 text-xs font-black sm:text-sm ${tipoConta === 'empresa' ? 'bg-foundy-green text-slate-950' : 'text-foundy-muted'}`} type="button" onClick={() => setTipoConta('empresa')}>Empresa</button>
+            <button className={`rounded-xl px-3 py-2 text-xs font-black sm:text-sm ${tipoConta === 'ponto_seguro' ? 'bg-foundy-green text-slate-950' : 'text-foundy-muted'}`} type="button" onClick={() => setTipoConta('ponto_seguro')}>Ponto Seguro</button>
           </div>
         ) : null}
         {modo === 'cadastrar' ? <Field label="Nome"><input className="foundy-input" value={nome} onChange={(event) => setNome(event.target.value)} placeholder="Seu nome" autoComplete="name" /></Field> : null}
-        {modo === 'cadastrar' && tipoConta === 'empresa' ? (
+        {modo === 'cadastrar' && tipoConta !== 'pessoal' ? (
           <div className="grid gap-3 rounded-3xl border border-foundy-green/30 bg-foundy-green/10 p-4">
-            <h3 className="font-black text-foundy-green">Dados públicos da instituição</h3>
-            <div className="grid gap-2">
-              <p className="text-sm font-black">Escolha o ponto de partida empresarial</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {companyPlanFallbacks.map((plan) => (
-                  <button
-                    className={`rounded-2xl border p-3 text-left text-sm ${empresaPlanoInteresse === plan.id ? 'border-foundy-green bg-foundy-green text-slate-950' : 'border-foundy-border bg-foundy-background text-foundy-muted'}`}
-                    key={plan.id}
-                    type="button"
-                    onClick={() => setEmpresaPlanoInteresse(plan.id as typeof empresaPlanoInteresse)}
-                  >
-                    <strong className="block">{plan.title}</strong>
-                    <span className="mt-1 block text-xs font-bold">{plan.price}</span>
-                    <span className="mt-2 block text-xs">{plan.id === 'company_free' ? 'Ativo após cadastro: até 5 itens.' : 'A conta nasce Básica e a solicitação paga vai para análise manual.'}</span>
-                  </button>
-                ))}
+            <h3 className="font-black text-foundy-green">{tipoConta === 'ponto_seguro' ? 'Cadastro de Ponto Seguro Foundy' : 'Dados públicos da instituição'}</h3>
+            {tipoConta === 'empresa' ? (
+              <div className="grid gap-2">
+                <p className="text-sm font-black">Escolha o ponto de partida empresarial</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {companyPlanFallbacks.map((plan) => (
+                    <button
+                      className={`rounded-2xl border p-3 text-left text-sm ${empresaPlanoInteresse === plan.id ? 'border-foundy-green bg-foundy-green text-slate-950' : 'border-foundy-border bg-foundy-background text-foundy-muted'}`}
+                      key={plan.id}
+                      type="button"
+                      onClick={() => setEmpresaPlanoInteresse(plan.id as typeof empresaPlanoInteresse)}
+                    >
+                      <strong className="block">{plan.title}</strong>
+                      <span className="mt-1 block text-xs font-bold">{plan.price}</span>
+                      <span className="mt-2 block text-xs">{plan.description}</span>
+                      <span className="mt-2 block rounded-xl bg-black/10 p-2 text-xs font-bold">{plan.item_limit === null ? 'Itens ativos: sem limite fixo' : plan.item_limit ? `Itens ativos: at? ${plan.item_limit}` : 'Entrada gratuita'}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="rounded-2xl border border-red-400/40 bg-red-500/10 p-3 text-xs font-bold text-red-100">A conta nasce Básica. Solicitações pagas vão para análise da moderação antes de liberar os benefícios.</p>
               </div>
-            </div>
-            <Field label="Nome da empresa ou instituição"><input className="foundy-input" value={empresaNome} onChange={(event) => setEmpresaNome(event.target.value)} placeholder="Ex.: Faculdade Centro Norte" /></Field>
+            ) : (
+              <div className="rounded-2xl border border-foundy-blue/30 bg-foundy-blue/10 p-3 text-sm text-foundy-blue">
+                Pontos Seguros são locais físicos, públicos e movimentados. Eles aparecem no mapa com ponto exato e podem ser sugeridos no chat como local seguro de encontro.
+              </div>
+            )}
+            <Field label="Nome da empresa ou institui??o"><input className="foundy-input" value={empresaNome} onChange={(event) => setEmpresaNome(event.target.value)} placeholder="Ex.: Faculdade Centro Norte" /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="CNPJ"><input className="foundy-input" value={empresaCnpj} onChange={(event) => setEmpresaCnpj(event.target.value)} placeholder="00.000.000/0000-00" /></Field>
               <Field label="CEP"><input className="foundy-input" value={empresaCep} onChange={(event) => setEmpresaCep(event.target.value)} placeholder="00000-000" /></Field>
             </div>
-            <Field label="Descrição curta"><textarea className="foundy-input min-h-20" value={empresaDescricao} onChange={(event) => setEmpresaDescricao(event.target.value)} placeholder="Ex.: Catálogo oficial de achados e perdidos do campus." /></Field>
+            <Field label="Descrição curta"><textarea className="foundy-input min-h-20" value={empresaDescricao} onChange={(event) => setEmpresaDescricao(event.target.value)} placeholder={tipoConta === 'ponto_seguro' ? 'Ex.: Recepção iluminada, aberta ao público e com equipe durante o dia.' : 'Ex.: Catálogo oficial de achados e perdidos do campus.'} /></Field>
             <Field label="Endereço público de retirada"><input className="foundy-input" value={empresaEndereco} onChange={(event) => setEmpresaEndereco(event.target.value)} placeholder="Ex.: Secretaria, Bloco A, Rua..." /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Cidade"><input className="foundy-input" value={empresaCidade} onChange={(event) => setEmpresaCidade(event.target.value)} /></Field>
               <Field label="UF"><input className="foundy-input uppercase" value={empresaUf} onChange={(event) => setEmpresaUf(event.target.value.toUpperCase().slice(0, 2))} maxLength={2} /></Field>
             </div>
-            <label className="flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><input checked={empresaCatalogoPublico} onChange={(event) => setEmpresaCatalogoPublico(event.target.checked)} type="checkbox" /> Catálogo visível para qualquer usuário encontrar pela aba Empresas.</label>
+            {tipoConta === 'ponto_seguro' ? (
+              <div className="grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Dias de funcionamento"><input className="foundy-input" value={safePointDays} onChange={(event) => setSafePointDays(event.target.value)} placeholder="Ex.: Segunda a sábado" /></Field>
+                  <Field label="Horário de funcionamento"><input className="foundy-input" value={safePointHours} onChange={(event) => setSafePointHours(event.target.value)} placeholder="Ex.: 8h às 18h" /></Field>
+                </div>
+                <div className="rounded-2xl border border-foundy-border bg-foundy-background p-3">
+                  <p className="mb-2 text-sm font-black">Clique no mapa para marcar o ponto exato do local</p>
+                  <MapaPerimetro center={safePointCoords} radius={70} onCenterChange={setSafePointCoords} />
+                  <p className="mt-2 text-xs text-foundy-muted">Coordenadas salvas: {safePointCoords.latitude.toFixed(5)}, {safePointCoords.longitude.toFixed(5)}</p>
+                </div>
+              </div>
+            ) : (
+              <label className="flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><input checked={empresaCatalogoPublico} onChange={(event) => setEmpresaCatalogoPublico(event.target.checked)} type="checkbox" /> Catálogo visível para qualquer usuário encontrar pela aba Empresas.</label>
+            )}
           </div>
         ) : null}
         <Field label="E-mail"><input className="foundy-input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="você@email.com" type="email" autoComplete="email" /></Field>
@@ -2494,10 +2759,18 @@ function PaymentInstructions({ payment }: { payment?: ManualPaymentInfo | null }
   if (!payment) return null
   return (
     <div className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm">
-      <p className="font-black text-foundy-green">Instruções de pagamento manual</p>
+      <p className="font-black text-foundy-green">{payment.checkout_url ? 'Checkout automático disponível' : 'Instruções de pagamento manual'}</p>
       <ul className="mt-3 grid gap-2 text-foundy-muted">
         {payment.instructions.map((line) => <li key={line}>{line}</li>)}
       </ul>
+      {payment.checkout_url ? (
+        <a className="mt-4 inline-flex h-11 items-center justify-center rounded-xl bg-foundy-green px-4 text-sm font-black text-slate-950" href={payment.checkout_url} target="_blank" rel="noreferrer">
+          Abrir pagamento seguro
+        </a>
+      ) : null}
+      <p className="mt-3 rounded-xl border border-foundy-border bg-foundy-background p-3 text-xs text-foundy-muted">
+        Esta janela não fecha automaticamente. Ela só deve ser fechada quando você concluir o pagamento, cancelar a solicitação ou decidir voltar depois.
+      </p>
     </div>
   )
 }
@@ -2581,7 +2854,6 @@ function ModalSolicitacaoMonetizacao({ plano, sessao, onClose, onDone }: { plano
       })
       setPayment(resposta.payment ?? null)
       setFeedback(resposta.mensagem ?? 'Solicitação registrada com sucesso.')
-      window.setTimeout(() => onDone(resposta.mensagem ?? 'Solicitação registrada com sucesso.'), 1200)
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Não foi possível enviar a solicitação.')
     } finally {
@@ -2627,7 +2899,6 @@ function ModalBoostAlerta({ alerta, sessao, onClose, onDone }: { alerta: LostAle
       const resposta = await solicitarBoostAlerta(alerta.id, sessao.usuario_id, boostType)
       setPayment(resposta.payment ?? null)
       setFeedback(resposta.mensagem ?? 'Alerta Ampliado solicitado.')
-      window.setTimeout(() => onDone(resposta.mensagem ?? 'Alerta Ampliado solicitado.'), 1400)
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Não foi possível solicitar o destaque.')
     } finally {
@@ -2931,9 +3202,11 @@ function ModalChatSeguro({
   chat,
   chatCarregando,
   mensagens,
+  pontosSeguros,
   feedback,
   valorAtual,
   onChangeValor,
+  onSuggestSafePoint,
   onEnviar,
   onDenunciar,
   denunciarDisponivel,
@@ -2946,9 +3219,11 @@ function ModalChatSeguro({
   chat: ChatSummary | null
   chatCarregando: boolean
   mensagens: MensagemChat[]
+  pontosSeguros: EmpresaFoundy[]
   feedback: string
   valorAtual: string
   onChangeValor: (value: string) => void
+  onSuggestSafePoint: (empresa: EmpresaFoundy) => void
   onEnviar: () => void
   onDenunciar: (motivo: string, prova?: string, arquivo?: string, mensagemId?: string) => void
   denunciarDisponivel: boolean
@@ -3045,21 +3320,32 @@ function ModalChatSeguro({
             {chatEncerrado ? (
               <p className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm text-foundy-green">Este chat foi resolvido e ficou salvo apenas no histórico.</p>
             ) : (
-              <div className="flex gap-2">
-                <textarea
-                  className="foundy-input min-h-12 flex-1 resize-none"
-                  value={valorAtual}
-                  onChange={(event) => onChangeValor(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      onEnviar()
-                    }
-                  }}
-                  placeholder="Escreva uma mensagem segura..."
-                  aria-label="Mensagem do chat. Enter envia, Shift Enter quebra linha."
-                />
-                <button className="grid size-12 shrink-0 place-items-center rounded-2xl bg-foundy-blue text-white" type="button" onClick={onEnviar} aria-label="Enviar mensagem"><Send size={18} /></button>
+              <div className="grid gap-3">
+                {pontosSeguros.length > 0 ? (
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {pontosSeguros.slice(0, 6).map((empresa) => (
+                      <button className="shrink-0 rounded-xl border border-foundy-green/40 bg-foundy-green/10 px-3 py-2 text-xs font-bold text-foundy-green" type="button" key={empresa.id} onClick={() => onSuggestSafePoint(empresa)}>
+                        Sugerir {empresa.empresa_nome ?? empresa.nome}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="flex gap-2">
+                  <textarea
+                    className="foundy-input min-h-12 flex-1 resize-none"
+                    value={valorAtual}
+                    onChange={(event) => onChangeValor(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        onEnviar()
+                      }
+                    }}
+                    placeholder="Escreva uma mensagem segura..."
+                    aria-label="Mensagem do chat. Enter envia, Shift Enter quebra linha."
+                  />
+                  <button className="grid size-12 shrink-0 place-items-center rounded-2xl bg-foundy-blue text-white" type="button" onClick={onEnviar} aria-label="Enviar mensagem"><Send size={18} /></button>
+                </div>
               </div>
             )}
           </div>

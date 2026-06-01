@@ -3,7 +3,7 @@
 import { Circle, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet'
 import { useEffect } from 'react'
 
-import type { ItemAchado } from '@/lib/foundy-api'
+import type { EmpresaFoundy, ItemAchado } from '@/lib/foundy-api'
 
 const CENTRO_PADRAO: [number, number] = [-23.55052, -46.633308]
 type GeoPoint = { latitude: number; longitude: number }
@@ -32,15 +32,19 @@ function FocoUsuario({ userLocation }: { userLocation: GeoPoint | null }) {
 
 export default function MapaInterativo({
   itens,
+  pontosSeguros = [],
   itemSelecionado,
   onSelecionarItem,
   onVerItem,
+  onVerPontoSeguro,
   userLocation,
 }: {
   itens: ItemAchado[]
+  pontosSeguros?: EmpresaFoundy[]
   itemSelecionado: ItemAchado | null
   onSelecionarItem: (item: ItemAchado) => void
   onVerItem?: (item: ItemAchado) => void
+  onVerPontoSeguro?: (empresa: EmpresaFoundy) => void
   userLocation?: GeoPoint | null
 }) {
   const centro: [number, number] = itemSelecionado
@@ -94,6 +98,31 @@ export default function MapaInterativo({
           </Popup>
         </Circle>
       ))}
+      {pontosSeguros
+        .filter((empresa) => typeof empresa.safe_point_latitude === 'number' && typeof empresa.safe_point_longitude === 'number')
+        .map((empresa) => (
+          <Circle
+            center={[empresa.safe_point_latitude as number, empresa.safe_point_longitude as number]}
+            key={`safe-${empresa.id}`}
+            pathOptions={{ color: '#facc15', fillColor: '#22c55e', fillOpacity: 0.34, weight: 4 }}
+            radius={95}
+          >
+            <Popup>
+              <div className="grid min-w-52 gap-2">
+                <strong>Ponto Seguro Foundy</strong>
+                <span>{empresa.empresa_nome ?? empresa.nome}</span>
+                <span>{empresa.public_opening_hours ?? empresa.safe_point_service_days ?? 'Horário informado no perfil'}</span>
+                <button
+                  className="rounded-lg bg-[#22c55e] px-3 py-1 text-xs font-bold text-slate-950"
+                  type="button"
+                  onClick={() => onVerPontoSeguro?.(empresa)}
+                >
+                  Ver Ponto Seguro
+                </button>
+              </div>
+            </Popup>
+          </Circle>
+        ))}
     </MapContainer>
   )
 }

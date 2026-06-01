@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.db.supabase_client import get_supabase
-from app.services.billing_service import company_catalog_limit, company_plan_name
+from app.services.billing_service import company_catalog_limit, company_plan_allows, company_plan_name
 from app.services.storage_service import store_public_image_if_needed
 
 
@@ -14,6 +14,7 @@ router = APIRouter()
 
 CatalogCategory = Literal["documentos", "eletronicos", "chaves", "vestuario", "outros"]
 CatalogStatus = Literal["disponivel", "retirado", "arquivado"]
+DOCUMENT_HINTS = ("rg", "cpf", "cnh", "documento", "identidade", "passaporte", "certidao", "certidão", "carteira de trabalho")
 
 
 class EmpresaCatalogoItemCreate(BaseModel):
@@ -62,7 +63,8 @@ async def listar_empresas(q: str | None = Query(default=None, max_length=80)) ->
             "id,nome,foto_url,ocupacao,tipo_conta,empresa_nome,empresa_descricao,"
             "empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_verificada,empresa_catalogo_publico,criado_em,"
             "plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,public_slug,public_description,"
-            "public_opening_hours,public_address_visible,custom_logo_url"
+            "public_opening_hours,public_address_visible,custom_logo_url,safe_point_latitude,safe_point_longitude,"
+            "safe_point_service_days,safe_point_clicks"
         )
         .eq("tipo_conta", "empresa")
         .eq("empresa_catalogo_publico", True)
@@ -115,7 +117,8 @@ async def criar_item_catalogo(empresa_id: UUID, payload: EmpresaCatalogoItemCrea
                     "Arquive ou marque itens como retirados, ou solicite um upgrade empresarial."
                 ),
             )
-    imagem_publica = None if payload.categoria == "documentos" else payload.imagem_url
+    privacy_text = f"{payload.titulo} {payload.descricao} {payload.subcategoria or ''}".casefold()
+    imagem_publica = None if payload.categoria == "documentos" or any(hint in privacy_text for hint in DOCUMENT_HINTS) else payload.imagem_url
     if imagem_publica:
         try:
             imagem_publica = await store_public_image_if_needed(imagem_publica, f"empresas/{empresa_id}")
@@ -155,7 +158,12 @@ async def atualizar_status_catalogo(item_id: UUID, payload: EmpresaCatalogoItemU
     )
     if not item.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item do catálogo não encontrado.")
-    await _ensure_empresa_owner(UUID(item.data[0]["empresa_usuario_id"]), payload.usuario_id)
+    empresa = await _ensure_empresa_owner(UUID(item.data[0]["empresa_usuario_id"]), payload.usuario_id)
+    if payload.status in {"retirado", "arquivado"} and not company_plan_allows(empresa.get("plan_type"), empresa.get("plan_status"), "history"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Histórico de retiradas e arquivamentos é exclusivo para Empresa Pro ou Eventos e Instituições.",
+        )
     updates = {"status": payload.status, "atualizado_em": datetime.now(timezone.utc).isoformat()}
     if payload.status == "retirado":
         if not payload.retirado_por_nome or not payload.retirado_em:
