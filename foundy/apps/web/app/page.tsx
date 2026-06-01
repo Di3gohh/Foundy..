@@ -1477,7 +1477,7 @@ function RadarSection({
 function SafePointMapOffer({ plan, onRequest }: { plan: MonetizationPlan; onRequest: () => void }) {
   return (
     <aside className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-green/30 bg-foundy-surface">
-      <div className="grid gap-4 p-5 md:grid-cols-[1fr_auto] md:items-center">
+      <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-center">
         <div>
           <p className="foundy-eyebrow text-sm font-semibold text-foundy-green">Oferta no contexto certo</p>
           <h2 className="mt-1 text-2xl font-black">Seja um Ponto Seguro Foundy</h2>
@@ -1486,7 +1486,7 @@ function SafePointMapOffer({ plan, onRequest }: { plan: MonetizationPlan; onRequ
             {plan.benefits.slice(0, 3).map((benefit) => <span className="rounded-full border border-foundy-border bg-foundy-background px-3 py-1 text-xs font-bold text-foundy-muted" key={benefit}>{benefit}</span>)}
           </div>
         </div>
-        <div className="rounded-3xl border border-foundy-border bg-foundy-background p-4 md:min-w-72">
+        <div className="rounded-3xl border border-foundy-border bg-foundy-background p-4">
           <p className="text-xs font-black uppercase tracking-wide text-foundy-green">{plan.price}</p>
           <p className="mt-2 text-sm leading-6 text-foundy-muted">{plan.ethical_notice}</p>
           <button className="mt-4 h-11 w-full rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={onRequest}>{plan.cta}</button>
