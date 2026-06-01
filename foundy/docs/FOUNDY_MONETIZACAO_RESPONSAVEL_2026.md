@@ -1,14 +1,14 @@
-# Foundy - Monetizacao Responsavel 2026
+# Foundy - Monetização Responsável 2026
 
-Este documento resume a camada de monetizacao implementada para o Foundy sem bloquear a missao principal da plataforma.
+Este documento resume a camada de monetização implementada para o Foundy sem bloquear a missão principal da plataforma.
 
 ## Regra central
 
-Usuarios comuns continuam podendo gratuitamente:
+Usuários comuns continuam podendo gratuitamente:
 
 - publicar item achado;
 - publicar alerta de perda;
-- conversar quando o fluxo de seguranca liberar;
+- conversar quando o fluxo de segurança liberar;
 - recuperar ou devolver itens;
 - denunciar abusos;
 - usar mapa, feed e recursos essenciais.
@@ -17,26 +17,26 @@ O Foundy nunca deve cobrar para recuperar item, abrir chat, responder desafio ou
 
 ## Fase 1 implementada
 
-- Empresa Verificada com solicitacao manual e aprovacao administrativa.
-- Ponto Seguro Foundy com solicitacao manual e aprovacao administrativa.
-- Apoie o Foundy com registro de intencao de apoio e pagamento manual.
-- Alerta Ampliado para alertas de perda, com ativacao manual pelo administrador.
+- Empresa Verificada com solicitação manual e aprovação administrativa.
+- Ponto Seguro Foundy com solicitação manual e aprovação administrativa.
+- Apoie o Foundy com registro de intenção de apoio e pagamento manual.
+- Alerta Ampliado para alertas de perda, com ativação manual pelo administrador.
 
 ## Fase 2 preparada
 
 - Estrutura de membros de empresa.
 - Estrutura de planos para eventos.
 - Estrutura de assinaturas futuras.
-- Relatorio inicial de catalogo empresarial.
-- QR/link publico para empresas.
-- Pagina publica de empresa por slug.
+- Relatório inicial de catálogo empresarial.
+- QR/link público para empresas.
+- Página pública de empresa por slug.
 
-## Variaveis de ambiente novas
+## Variáveis de ambiente novas
 
-- `FOUNDY_SUPPORT_PIX_KEY`: chave PIX opcional para instrucoes de pagamento manual.
-- `SUPPORT_EMAIL`: e-mail oficial de suporte, ja usado como `foundy.company@gmail.com`.
+- `FOUNDY_SUPPORT_PIX_KEY`: chave PIX opcional para instruções de pagamento manual.
+- `SUPPORT_EMAIL`: e-mail oficial de suporte, já usado como `foundy.company@gmail.com`.
 
-Se `FOUNDY_SUPPORT_PIX_KEY` nao existir, a API orienta o usuario a concluir pelo e-mail oficial.
+Se `FOUNDY_SUPPORT_PIX_KEY` não existir, a API orienta o usuário a concluir pelo e-mail oficial.
 
 ## Endpoints principais
 
@@ -78,9 +78,9 @@ Novas tabelas:
 
 Campos adicionados:
 
-- `usuarios`: plano, selo verificado, ponto seguro, perfil publico e dados de pagina.
-- `alertas_perdidos`: status de destaque temporario.
+- `usuarios`: plano, selo verificado, ponto seguro, perfil público e dados de página.
+- `alertas_perdidos`: status de destaque temporário.
 
-## Observacao de produto
+## Observação de produto
 
-A monetizacao deve ser comunicada como apoio a comunidade, visibilidade opcional e estrutura empresarial. Evite linguagem predatoria como "pague para recuperar" ou "garanta seu item de volta".
+A monetização deve ser comunicada como apoio à comunidade, visibilidade opcional e estrutura empresarial. Evite linguagem predatória como "pague para recuperar" ou "garanta seu item de volta".
