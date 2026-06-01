@@ -67,7 +67,7 @@ export default function MonetizacaoPage() {
           user_id: session?.usuario_id ?? null,
           amount_cents: amount,
           payer_name: session?.nome ?? null,
-          payer_email: session?.email ?? contact || null,
+          payer_email: (session?.email ?? contact) || null,
           message: 'Apoio iniciado pela página /monetizacao.',
         })
         setPayment(resposta.payment ?? null)
