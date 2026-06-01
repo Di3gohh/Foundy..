@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import urllib.error
 import urllib.request
@@ -232,6 +234,35 @@ async def _fetch_mercado_pago_subscription(preapproval_id: str) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
+def _parse_mercado_pago_signature(signature: str | None) -> dict[str, str]:
+    if not signature:
+        return {}
+    parts: dict[str, str] = {}
+    for segment in signature.split(","):
+        key, _, value = segment.partition("=")
+        if key and value:
+            parts[key.strip()] = value.strip()
+    return parts
+
+
+def _validate_mercado_pago_webhook_signature(request: Request, event_id: str | None) -> None:
+    secret = settings.mercado_pago_webhook_secret
+    if not secret:
+        return
+
+    signature_parts = _parse_mercado_pago_signature(request.headers.get("x-signature"))
+    request_id = request.headers.get("x-request-id")
+    timestamp = signature_parts.get("ts")
+    received_hash = signature_parts.get("v1")
+    if not event_id or not request_id or not timestamp or not received_hash:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Webhook Mercado Pago sem assinatura válida.")
+
+    manifest = f"id:{str(event_id).lower()};request-id:{request_id};ts:{timestamp};"
+    expected_hash = hmac.new(secret.encode("utf-8"), manifest.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_hash, received_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Assinatura do webhook Mercado Pago inválida.")
+
+
 async def _send_boost_regional_emails(supabase, boost: dict) -> int:
     if boost.get("regional_emails_sent_at"):
         return int(boost.get("regional_emails_count") or 0)
@@ -463,6 +494,7 @@ async def mercado_pago_webhook(request: Request) -> dict[str, str]:
         or request.query_params.get("id")
     )
     topic = str(payload.get("type") or payload.get("topic") or request.query_params.get("topic") or "")
+    _validate_mercado_pago_webhook_signature(request, event_id)
 
     if "subscription_preapproval" in topic or "preapproval" in topic:
         if not event_id:
