@@ -87,7 +87,24 @@ import {
   adminExcluirDenuncia,
   adminExcluirRegistroPermanente,
   adminResolverDenuncia,
+  adminAtualizarApoioFoundy,
+  adminAtualizarBoostAlerta,
+  adminAtualizarSolicitacaoMonetizacao,
+  atualizarPerfilPublicoEmpresa,
+  buscarPerfilEmpresa,
+  buscarPlanosMonetizacao,
+  buscarQrCodeEmpresa,
+  buscarRelatorioEmpresa,
+  criarApoioFoundy,
+  criarSolicitacaoMonetizacao,
   marcarItemCatalogoRetirado,
+  solicitarBoostAlerta,
+  type LossAlertBoost,
+  type ManualPaymentInfo,
+  type MonetizationPlan,
+  type MonetizationPlansResponse,
+  type MonetizationRequest,
+  type SupportContribution,
 } from '@/lib/foundy-api'
 
 const MapaInterativo = dynamic(() => import('@/components/MapaInterativo'), {
@@ -127,10 +144,14 @@ type ModalAtivo =
   | 'admin'
   | 'detalhe-item'
   | 'bloqueio-conta'
+  | 'monetizacao'
+  | 'apoiar'
+  | 'solicitar-monetizacao'
+  | 'boost-alerta'
   | null
 
 type GeoPoint = { latitude: number; longitude: number }
-type MainTab = 'feed' | 'mapa' | 'seguranca' | 'usuario' | 'empresas' | 'empresaPainel' | 'admin'
+type MainTab = 'feed' | 'mapa' | 'seguranca' | 'usuario' | 'empresas' | 'empresaPainel' | 'admin' | 'monetizacao'
 type FeedMode = 'achados' | 'perdidos'
 type ItemFilter =
   | 'todos'
@@ -159,6 +180,13 @@ type AdminData = {
   denuncias_posts?: unknown[]
   denuncias_resolvidas?: unknown[]
   banidos?: unknown[]
+  monetizacao?: {
+    solicitacoes?: MonetizationRequest[]
+    apoios?: SupportContribution[]
+    boosts?: LossAlertBoost[]
+    empresas_verificadas?: unknown[]
+    pontos_seguros?: unknown[]
+  }
 }
 
 const defaultPoint: GeoPoint = { latitude: -23.55052, longitude: -46.633308 }
@@ -261,6 +289,10 @@ function formatDistance(meters: number | null) {
   if (meters === null || Number.isNaN(meters)) return 'Distancia protegida'
   if (meters < 1000) return `${Math.round(meters)} m`
   return `${(meters / 1000).toFixed(1).replace('.', ',')} km`
+}
+
+function formatMoney(cents: number) {
+  return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
 function textoPesquisavelItem(item: ItemAchado | LostAlert) {
@@ -372,6 +404,9 @@ export default function Home() {
   const [empresaSelecionada, setEmpresaSelecionada] = useState<EmpresaFoundy | null>(null)
   const [catalogoEmpresa, setCatalogoEmpresa] = useState<EmpresaCatalogoItem[]>([])
   const [catalogoMensagem, setCatalogoMensagem] = useState('Catálogo empresarial pronto para consulta.')
+  const [planosMonetizacao, setPlanosMonetizacao] = useState<MonetizationPlansResponse | null>(null)
+  const [planoSelecionado, setPlanoSelecionado] = useState<MonetizationPlan | null>(null)
+  const [boostAlerta, setBoostAlerta] = useState<LostAlert | null>(null)
   const mapSectionRef = useRef<HTMLDivElement | null>(null)
   const feedItemRefs = useRef<Record<string, HTMLElement | null>>({})
 
@@ -428,6 +463,15 @@ export default function Home() {
     }
   }, [])
 
+  const carregarPlanosMonetizacao = useCallback(async () => {
+    try {
+      const dados = await buscarPlanosMonetizacao()
+      setPlanosMonetizacao(dados)
+    } catch (error) {
+      setMensagemSistema(error instanceof Error ? error.message : 'Não foi possível carregar a monetização responsável.')
+    }
+  }, [])
+
   useEffect(() => {
     void carregarItens()
     void carregarPerdas()
@@ -452,6 +496,10 @@ export default function Home() {
   useEffect(() => {
     if (activeTab === 'empresas') void carregarEmpresas(empresaBusca)
   }, [activeTab, carregarEmpresas, empresaBusca])
+
+  useEffect(() => {
+    if (activeTab === 'monetizacao') void carregarPlanosMonetizacao()
+  }, [activeTab, carregarPlanosMonetizacao])
 
   useEffect(() => {
     if (!sessao) return
@@ -554,7 +602,7 @@ export default function Home() {
       if (!bateFiltro) return false
       if (!termo) return true
       return textoPesquisavelItem(alerta).includes(termo)
-    })
+    }).sort((a, b) => Number(Boolean(b.boost_ativo)) - Number(Boolean(a.boost_ativo)) || new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
   }, [buscaTexto, filtro, perdasProximas])
 
   const mapaItens = useMemo(
@@ -916,6 +964,7 @@ export default function Home() {
               { id: 'feed', label: 'Feed' },
               { id: 'mapa', label: 'Mapa' },
               { id: 'empresas', label: 'Empresas' },
+              { id: 'monetizacao', label: 'Apoiar' },
               { id: 'seguranca', label: 'Segurança' },
               { id: 'usuario', label: 'Minha página' },
               ...(sessao?.tipo_conta === 'empresa' ? [{ id: 'empresaPainel', label: 'Meu catálogo' }] : []),
@@ -960,9 +1009,24 @@ export default function Home() {
         {activeTab === 'seguranca' ? (
           <SecuritySection />
         ) : activeTab === 'usuario' && sessao ? (
-          <UserSection painel={painel} sessao={sessao} onOpenProfile={() => setModalAtivo('perfil')} onOpenChats={() => setModalAtivo('chats')} onDeleteItem={(id) => void apagarMeuItem(id)} onDeleteAlert={(id) => void apagarMeuAlerta(id)} />
+          <UserSection painel={painel} sessao={sessao} onOpenProfile={() => setModalAtivo('perfil')} onOpenChats={() => setModalAtivo('chats')} onDeleteItem={(id) => void apagarMeuItem(id)} onDeleteAlert={(id) => void apagarMeuAlerta(id)} onBoostAlert={(alerta) => { setBoostAlerta(alerta); setModalAtivo('boost-alerta') }} />
         ) : activeTab === 'empresas' ? (
           <EmpresasSection empresas={empresas} busca={empresaBusca} catalogo={catalogoEmpresa} empresaSelecionada={empresaSelecionada} mensagem={catalogoMensagem} onBuscaChange={setEmpresaBusca} onSelecionarEmpresa={(empresa) => void abrirEmpresa(empresa)} onVoltar={() => { setEmpresaSelecionada(null); setCatalogoEmpresa([]) }} />
+        ) : activeTab === 'monetizacao' ? (
+          <MonetizacaoSection
+            planos={planosMonetizacao}
+            sessao={sessao}
+            onCarregar={carregarPlanosMonetizacao}
+            onSolicitar={(plan) => {
+              if (plan.id === 'loss_alert_boost') {
+                setMensagemSistema('Abra um alerta de perda que você criou e clique em "Ampliar alcance". Assim garantimos que só o dono do alerta solicite destaque.')
+                setActiveTab('usuario')
+                return
+              }
+              setPlanoSelecionado(plan)
+              setModalAtivo(plan.id === 'support_foundy' ? 'apoiar' : 'solicitar-monetizacao')
+            }}
+          />
         ) : activeTab === 'empresaPainel' && sessao?.tipo_conta === 'empresa' ? (
           <EmpresaPainelSection sessao={sessao} onMensagem={setMensagemSistema} />
         ) : activeTab === 'admin' && sessao && adminData ? (
@@ -1051,6 +1115,10 @@ export default function Home() {
           }}
           onFound={(alerta) => { setModalAtivo(null); void abrirChatDePerda(alerta) }}
           onMap={(item) => { setModalAtivo(null); if (detalheTipo === 'perda') selecionarPerdaNoMapa(item as LostAlert); else selecionarItemNoMapa(item as ItemAchado) }}
+          onBoost={(alerta) => {
+            setBoostAlerta(alerta)
+            setModalAtivo('boost-alerta')
+          }}
         />
       ) : null}
       {modalAtivo === 'chat' ? (
@@ -1093,6 +1161,9 @@ export default function Home() {
       {modalAtivo === 'chats' && sessao ? <ModalChats chats={painel?.chats ?? []} onClose={() => setModalAtivo(null)} onOpen={(chat) => void abrirChat(chat)} /> : null}
       {modalAtivo === 'onboarding' && sessao ? <ModalOnboarding onClose={() => { localStorage.setItem(`${onboardingKey}-${sessao.usuario_id}`, '1'); setModalAtivo(null) }} /> : null}
       {modalAtivo === 'admin' && sessao && adminData ? <ModalAdmin data={adminData} adminId={sessao.usuario_id} onClose={() => setModalAtivo(null)} onRefresh={async () => setAdminData(await buscarPainelAdmin(sessao.usuario_id))} /> : null}
+      {modalAtivo === 'apoiar' ? <ModalApoiarFoundy sessao={sessao} onClose={() => setModalAtivo(null)} /> : null}
+      {modalAtivo === 'solicitar-monetizacao' && planoSelecionado ? <ModalSolicitacaoMonetizacao plano={planoSelecionado} sessao={sessao} onClose={() => setModalAtivo(null)} onDone={(mensagem) => { setMensagemSistema(mensagem); setModalAtivo(null) }} /> : null}
+      {modalAtivo === 'boost-alerta' && sessao && boostAlerta ? <ModalBoostAlerta alerta={boostAlerta} sessao={sessao} onClose={() => setModalAtivo(null)} onDone={(mensagem) => { setMensagemSistema(mensagem); setModalAtivo(null); void carregarPerdas(localUsuario?.latitude, localUsuario?.longitude); void carregarPainel(sessao) }} /> : null}
     </main>
   )
 }
@@ -1312,6 +1383,7 @@ function LostAlertCard({
         <div className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full bg-red-500 px-3 py-1 text-xs font-black text-white">
           Procurando
         </div>
+        {alerta.boost_ativo ? <div className="absolute left-3 top-12 inline-flex items-center gap-2 rounded-full bg-foundy-green px-3 py-1 text-xs font-black text-slate-950"><Sparkles size={13} /> Alerta ampliado</div> : null}
         <div className="absolute bottom-3 right-3 rounded-full bg-foundy-blue px-3 py-1 text-xs font-bold text-white">{formatDistance(alerta.distancia_metros ?? null)}</div>
       </div>
       <div className="grid gap-3 p-4 sm:p-5">
@@ -1343,6 +1415,7 @@ function ModalDetalhePost({
   onClaim,
   onFound,
   onMap,
+  onBoost,
 }: {
   item: ItemAchado | LostAlert
   tipo: 'achado' | 'perda'
@@ -1351,6 +1424,7 @@ function ModalDetalhePost({
   onClaim: (item: ItemAchado) => void
   onFound: (alerta: LostAlert) => void
   onMap: (item: ItemAchado | LostAlert) => void
+  onBoost: (alerta: LostAlert) => void
 }) {
   const categoria = item.categoria ?? 'outros'
   const imageUrl = item.imagem_url ?? placeholdersPorCategoria[categoria]
@@ -1385,6 +1459,7 @@ function ModalDetalhePost({
             <button className="foundy-pressable rounded-xl border border-foundy-border px-4 py-2 text-sm font-black" type="button" onClick={() => onMap(item)}>Ver no mapa</button>
             {isFound && !isOwner ? <button className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950" type="button" onClick={() => onClaim(item as ItemAchado)}>É meu</button> : null}
             {!isFound && !isOwner ? <button className="foundy-pressable rounded-xl bg-foundy-green px-4 py-2 text-sm font-black text-slate-950" type="button" onClick={() => onFound(item as LostAlert)}>Encontrei</button> : null}
+            {!isFound && isOwner ? <button className="foundy-pressable rounded-xl bg-foundy-blue px-4 py-2 text-sm font-black text-white" type="button" onClick={() => onBoost(item as LostAlert)}>Ampliar alcance</button> : null}
           </div>
         </section>
       </div>
@@ -1408,6 +1483,7 @@ function UserSection({
   onOpenChats,
   onDeleteItem,
   onDeleteAlert,
+  onBoostAlert,
 }: {
   painel: UserDashboard | null
   sessao: FoundySession
@@ -1415,6 +1491,7 @@ function UserSection({
   onOpenChats: () => void
   onDeleteItem: (itemId: string) => void
   onDeleteAlert: (alertaId: string) => void
+  onBoostAlert: (alerta: LostAlert) => void
 }) {
   return (
     <section className="grid gap-4">
@@ -1455,8 +1532,8 @@ function UserSection({
           <SimpleRow
             key={alerta.id}
             title={alerta.titulo}
-            text={alerta.status}
-            action={alerta.status !== 'arquivado' ? <button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => onDeleteAlert(alerta.id)}>Arquivar</button> : null}
+            text={`${alerta.status}${alerta.boost_ativo ? ' - Alerta ampliado ativo' : ''}`}
+            action={alerta.status !== 'arquivado' ? <div className="flex flex-wrap gap-2"><button className="rounded-xl bg-foundy-blue px-3 py-2 text-xs font-black text-white" type="button" onClick={() => onBoostAlert(alerta)}>Ampliar alcance</button><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => onDeleteAlert(alerta.id)}>Arquivar</button></div> : null}
           />
         ))}
       </PanelList>
@@ -1479,6 +1556,71 @@ function SecuritySection() {
         <TrustCard title="Empresas como catálogo" text="Instituições organizam itens para retirada presencial no local informado, sem chat ou segredo." />
         <TrustCard title="Sem extorsão" text="PIX, taxa, frete antecipado, cobrança e resgate violam os termos e podem gerar denúncia." />
         <TrustCard title="Dados protegidos" text="Documentos, telefones, e-mails e endereços exatos devem ser ocultados antes de qualquer publicação." />
+      </div>
+    </section>
+  )
+}
+
+function MonetizacaoSection({
+  planos,
+  sessao,
+  onCarregar,
+  onSolicitar,
+}: {
+  planos: MonetizationPlansResponse | null
+  sessao: FoundySession | null
+  onCarregar: () => void
+  onSolicitar: (plan: MonetizationPlan) => void
+}) {
+  useEffect(() => {
+    if (!planos) onCarregar()
+  }, [onCarregar, planos])
+
+  const fallback: MonetizationPlan[] = [
+    { id: 'company_verified', title: 'Empresa Verificada', price: 'R$ 49,90/mês', amount_cents: 4990, description: 'Selo de confiança, página pública, QR Code e mais visibilidade para catálogos institucionais.', benefits: ['Selo de Empresa Verificada', 'Página pública personalizada', 'QR Code para recepção', 'Suporte prioritário'], ethical_notice: 'O selo indica análise cadastral, mas usuários ainda devem seguir o Protocolo Foundy.', cta: 'Quero verificar minha empresa' },
+    { id: 'safe_point', title: 'Ponto Seguro Foundy', price: 'a partir de R$ 29,90/mês', amount_cents: 2990, description: 'Locais parceiros para devoluções em ambiente público e monitorado.', benefits: ['Selo Ponto Seguro', 'Destaque no mapa', 'Horário público de atendimento'], ethical_notice: 'Combine devoluções em locais públicos e evite dados pessoais sensíveis.', cta: 'Quero ser Ponto Seguro' },
+    { id: 'support_foundy', title: 'Apoie o Foundy', price: 'R$ 3, R$ 5, R$ 10, R$ 20 ou livre', amount_cents: 0, description: 'Contribuição voluntária para manter servidores, segurança e melhorias.', benefits: ['Mantém o Foundy gratuito', 'Ajuda moderação e segurança', 'Apoia melhorias da comunidade'], ethical_notice: 'Apoiar é opcional e não altera suas chances de recuperar ou devolver um item.', cta: 'Apoiar o Foundy' },
+    { id: 'loss_alert_boost', title: 'Alerta Ampliado', price: 'R$ 4,90 por 24h; R$ 9,90 por 3 dias; R$ 19,90 por 7 dias', amount_cents: 490, description: 'Destaque leve e temporário para alertas de perda.', benefits: ['Mais visibilidade no feed de perdas', 'Badge de Alerta Ampliado', 'Duração limitada'], ethical_notice: 'Não garante recuperação. Apenas aumenta a visibilidade por tempo limitado.', cta: 'Ampliar um alerta de perda' },
+  ]
+  const lista = planos?.plans ?? fallback
+
+  return (
+    <section className="grid gap-5">
+      <div className="foundy-hero-panel rounded-3xl border border-foundy-border bg-foundy-surface p-5">
+        <p className="foundy-eyebrow foundy-attention text-sm font-semibold text-foundy-green">Crescimento responsável</p>
+        <h1 className="mt-2 text-3xl font-black">Monetização sem paywall para recuperar itens.</h1>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-foundy-muted">
+          O Foundy continua gratuito para postar, encontrar, conversar após aprovação e denunciar abusos. A receita vem de empresas verificadas, pontos seguros, apoios voluntários e destaque opcional para alertas de perda.
+        </p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {lista.map((plan) => (
+          <article className="foundy-item-card rounded-3xl border border-foundy-border bg-foundy-surface p-5" key={plan.id}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wide text-foundy-green">{plan.price}</p>
+                <h2 className="mt-2 text-2xl font-black">{plan.title}</h2>
+              </div>
+              <span className="grid size-12 place-items-center rounded-2xl bg-foundy-blue/15 text-foundy-blue">
+                {plan.id === 'support_foundy' ? <Star size={22} /> : plan.id === 'safe_point' ? <ShieldCheck size={22} /> : plan.id === 'loss_alert_boost' ? <Sparkles size={22} /> : <Building2 size={22} />}
+              </span>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-foundy-muted">{plan.description}</p>
+            <ul className="mt-4 grid gap-2 text-sm">
+              {plan.benefits.map((benefit) => <li className="rounded-2xl border border-foundy-border bg-foundy-background p-3" key={benefit}>{benefit}</li>)}
+            </ul>
+            <p className="mt-4 rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-3 text-sm text-foundy-green">{plan.ethical_notice}</p>
+            <button className="mt-4 h-11 w-full rounded-xl bg-foundy-blue text-sm font-black text-white" type="button" onClick={() => onSolicitar(plan)}>
+              {plan.id === 'loss_alert_boost' && sessao ? 'Escolher em um alerta meu' : plan.cta}
+            </button>
+          </article>
+        ))}
+      </div>
+      <div className="rounded-3xl border border-foundy-border bg-foundy-surface p-5">
+        <h2 className="text-xl font-black">Regras éticas da monetização</h2>
+        <p className="mt-2 text-sm leading-6 text-foundy-muted">
+          Nunca cobramos para recuperar um item, abrir chat, responder desafio ou publicar item achado. Pagamentos da Fase 1 são manuais e confirmados pelo administrador oficial.
+        </p>
       </div>
     </section>
   )
@@ -1585,6 +1727,13 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
   const [retiradaItemId, setRetiradaItemId] = useState<string | null>(null)
   const [retiradoPor, setRetiradoPor] = useState('')
   const [retiradoEm, setRetiradoEm] = useState(() => new Date().toISOString().slice(0, 16))
+  const [monetizacaoMensagem, setMonetizacaoMensagem] = useState('Solicite verificação, Ponto Seguro ou gere materiais da sua empresa.')
+  const [publicSlug, setPublicSlug] = useState(sessao.public_slug || '')
+  const [publicDescription, setPublicDescription] = useState(sessao.empresa_descricao || '')
+  const [publicHours, setPublicHours] = useState('')
+  const [publicAddressVisible, setPublicAddressVisible] = useState(false)
+  const [qrLink, setQrLink] = useState('')
+  const [relatorio, setRelatorio] = useState<{ total_itens: number; total_retirados: number; total_disponiveis: number; taxa_retirada: number } | null>(null)
   const categoriaAtual = categoriaFromFiltro(categoriaCatalogo)
 
   const carregar = useCallback(async () => {
@@ -1595,6 +1744,61 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
   useEffect(() => {
     void carregar().catch(() => setMensagem('Não foi possível carregar seu catálogo empresarial.'))
   }, [carregar])
+
+  useEffect(() => {
+    void buscarPerfilEmpresa(sessao.usuario_id).then((perfil) => {
+      setPublicSlug(perfil.public_slug ?? '')
+      setPublicDescription(perfil.public_description ?? perfil.empresa_descricao ?? '')
+      setPublicHours(perfil.public_opening_hours ?? '')
+      setPublicAddressVisible(Boolean(perfil.public_address_visible))
+    }).catch(() => undefined)
+  }, [sessao.usuario_id])
+
+  async function solicitarMonetizacaoEmpresa(requestType: 'company_verified' | 'safe_point' | 'company_pro') {
+    try {
+      const resposta = await criarSolicitacaoMonetizacao({
+        user_id: sessao.usuario_id,
+        company_id: sessao.usuario_id,
+        request_type: requestType,
+        contact_name: sessao.empresa_nome || sessao.nome,
+        contact_email: sessao.email,
+        message: 'Solicitação enviada pelo painel empresarial.',
+        desired_plan: requestType,
+      })
+      setMonetizacaoMensagem(resposta.mensagem ?? 'Solicitação enviada para análise manual.')
+    } catch (error) {
+      setMonetizacaoMensagem(error instanceof Error ? error.message : 'Não foi possível enviar a solicitação.')
+    }
+  }
+
+  async function salvarPerfilPublicoEmpresa() {
+    try {
+      const resposta = await atualizarPerfilPublicoEmpresa(sessao.usuario_id, {
+        usuario_id: sessao.usuario_id,
+        public_slug: publicSlug,
+        public_description: publicDescription,
+        public_opening_hours: publicHours,
+        public_address_visible: publicAddressVisible,
+      })
+      setMonetizacaoMensagem(resposta.mensagem)
+    } catch (error) {
+      setMonetizacaoMensagem(error instanceof Error ? error.message : 'Não foi possível salvar a página pública.')
+    }
+  }
+
+  async function carregarMateriaisEmpresa() {
+    try {
+      const [qr, resumo] = await Promise.all([
+        buscarQrCodeEmpresa(sessao.usuario_id, sessao.usuario_id),
+        buscarRelatorioEmpresa(sessao.usuario_id, sessao.usuario_id),
+      ])
+      setQrLink(qr.url)
+      setRelatorio(resumo)
+      setMonetizacaoMensagem('QR Code e relatório inicial carregados.')
+    } catch (error) {
+      setMonetizacaoMensagem(error instanceof Error ? error.message : 'Não foi possível carregar materiais empresariais.')
+    }
+  }
 
   function selecionarImagem(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -1672,6 +1876,35 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
         <p className="foundy-eyebrow text-sm font-semibold text-foundy-green">Painel empresarial</p>
         <h1 className="mt-2 text-3xl font-black">{sessao.empresa_nome || sessao.nome}</h1>
         <p className="mt-2 text-sm leading-6 text-foundy-muted">Catálogo interno para achados e perdidos. Sem chat, sem desafio do dono e sem geolocalização.</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {sessao.verified_badge === 'true' || sessao.plan_status === 'active' ? <span className="rounded-full bg-foundy-green px-3 py-1 text-xs font-black text-slate-950">Empresa Verificada</span> : null}
+          {sessao.is_safe_point === 'true' ? <span className="rounded-full bg-foundy-blue px-3 py-1 text-xs font-black text-white">Ponto Seguro Foundy</span> : null}
+          <span className="rounded-full border border-foundy-border px-3 py-1 text-xs font-bold text-foundy-muted">Plano: {sessao.plan_type ?? 'free'}</span>
+        </div>
+      </div>
+      <div className="grid gap-4 rounded-3xl border border-foundy-border bg-foundy-surface p-4 lg:grid-cols-[1fr_1fr]">
+        <div className="grid gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-wide text-foundy-green">Monetização empresarial</p>
+            <h2 className="mt-1 text-xl font-black">Cresça com confiança, sem bloquear usuários comuns.</h2>
+            <p className="mt-2 text-sm leading-6 text-foundy-muted">{monetizacaoMensagem}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="rounded-xl bg-foundy-blue px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void solicitarMonetizacaoEmpresa('company_verified')}>Solicitar verificação</button>
+            <button className="rounded-xl border border-foundy-green/50 px-3 py-2 text-xs font-black text-foundy-green" type="button" onClick={() => void solicitarMonetizacaoEmpresa('safe_point')}>Quero ser Ponto Seguro</button>
+            <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => void carregarMateriaisEmpresa()}>QR Code e relatório</button>
+          </div>
+          {qrLink ? <div className="rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><p className="font-black">Link público/QR</p><a className="mt-1 block break-all text-foundy-blue underline" href={qrLink} target="_blank">{qrLink}</a><p className="mt-2 text-xs text-foundy-muted">Encontrou ou perdeu algo aqui? Acesse o Foundy.</p></div> : null}
+          {relatorio ? <div className="grid gap-2 sm:grid-cols-4"><Metric label="Itens" value={String(relatorio.total_itens)} /><Metric label="Disponíveis" value={String(relatorio.total_disponiveis)} /><Metric label="Retirados" value={String(relatorio.total_retirados)} /><Metric label="Taxa" value={`${relatorio.taxa_retirada}%`} /></div> : null}
+        </div>
+        <div className="grid gap-3">
+          <h3 className="font-black">Página pública da empresa</h3>
+          <Field label="Slug público"><input className="foundy-input" value={publicSlug} onChange={(event) => setPublicSlug(event.target.value)} placeholder="ex.: faculdade-centro-norte" /></Field>
+          <Field label="Descrição pública"><textarea className="foundy-input min-h-20" value={publicDescription} onChange={(event) => setPublicDescription(event.target.value)} /></Field>
+          <Field label="Horário de funcionamento"><input className="foundy-input" value={publicHours} onChange={(event) => setPublicHours(event.target.value)} placeholder="Ex.: Seg a Sex, 8h às 18h" /></Field>
+          <label className="flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm"><input checked={publicAddressVisible} onChange={(event) => setPublicAddressVisible(event.target.checked)} type="checkbox" /> Exibir endereço público de retirada.</label>
+          <button className="h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={() => void salvarPerfilPublicoEmpresa()}>Salvar página pública</button>
+        </div>
       </div>
       <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -1940,6 +2173,168 @@ function ModalBloqueioConta({ sessao, onLogout }: { sessao: FoundySession; onLog
         </button>
       </section>
     </div>
+  )
+}
+
+function PaymentInstructions({ payment }: { payment?: ManualPaymentInfo | null }) {
+  if (!payment) return null
+  return (
+    <div className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm">
+      <p className="font-black text-foundy-green">Instruções de pagamento manual</p>
+      <ul className="mt-3 grid gap-2 text-foundy-muted">
+        {payment.instructions.map((line) => <li key={line}>{line}</li>)}
+      </ul>
+    </div>
+  )
+}
+
+function ModalApoiarFoundy({ sessao, onClose }: { sessao: FoundySession | null; onClose: () => void }) {
+  const [amount, setAmount] = useState(500)
+  const [customAmount, setCustomAmount] = useState('')
+  const [payerName, setPayerName] = useState(sessao?.nome ?? '')
+  const [payerEmail, setPayerEmail] = useState(sessao?.email ?? '')
+  const [message, setMessage] = useState('')
+  const [feedback, setFeedback] = useState('Apoiar o Foundy é opcional e não altera suas chances de recuperar ou devolver um item.')
+  const [payment, setPayment] = useState<ManualPaymentInfo | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function submit() {
+    const cents = customAmount ? Math.round(Number(customAmount.replace(',', '.')) * 100) : amount
+    if (!Number.isFinite(cents) || cents <= 0) return setFeedback('Informe um valor válido para apoiar.')
+    if (!sessao && !payerEmail.includes('@')) return setFeedback('Informe um e-mail para receber as instruções.')
+    setLoading(true)
+    try {
+      const resposta = await criarApoioFoundy({
+        user_id: sessao?.usuario_id ?? null,
+        amount_cents: cents,
+        payer_name: payerName || sessao?.nome || null,
+        payer_email: payerEmail || sessao?.email || null,
+        message,
+        payment_method: 'manual_pix',
+      })
+      setFeedback(resposta.mensagem ?? 'Apoio registrado. Obrigado por fortalecer a comunidade Foundy.')
+      setPayment(resposta.payment ?? null)
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Não foi possível registrar o apoio.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <ModalBase titulo="Apoie o Foundy" subtitulo="Ajude a manter a plataforma gratuita, segura e ativa." onClose={onClose}>
+      <div className="grid gap-4 p-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[300, 500, 1000, 2000].map((value) => <button className={`h-12 rounded-xl border text-sm font-black ${amount === value && !customAmount ? 'border-foundy-green bg-foundy-green text-slate-950' : 'border-foundy-border'}`} key={value} type="button" onClick={() => { setAmount(value); setCustomAmount('') }}>{formatMoney(value)}</button>)}
+        </div>
+        <Field label="Outro valor em reais"><input className="foundy-input" value={customAmount} onChange={(event) => setCustomAmount(event.target.value)} placeholder="Ex.: 15,00" /></Field>
+        {!sessao ? <div className="grid gap-3 sm:grid-cols-2"><Field label="Nome"><input className="foundy-input" value={payerName} onChange={(event) => setPayerName(event.target.value)} /></Field><Field label="E-mail"><input className="foundy-input" value={payerEmail} onChange={(event) => setPayerEmail(event.target.value)} type="email" /></Field></div> : null}
+        <Field label="Mensagem opcional"><textarea className="foundy-input min-h-20" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Ex.: Estou torcendo pelo Foundy!" /></Field>
+        <p className="rounded-xl border border-foundy-blue/30 bg-foundy-blue/10 p-3 text-sm text-foundy-blue">{feedback}</p>
+        <PaymentInstructions payment={payment} />
+        <button className="h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950 disabled:opacity-60" type="button" disabled={loading} onClick={() => void submit()}>{loading ? 'Gerando...' : 'Gerar solicitação de apoio'}</button>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalSolicitacaoMonetizacao({ plano, sessao, onClose, onDone }: { plano: MonetizationPlan; sessao: FoundySession | null; onClose: () => void; onDone: (mensagem: string) => void }) {
+  const [name, setName] = useState(sessao?.empresa_nome || sessao?.nome || '')
+  const [email, setEmail] = useState(sessao?.email ?? '')
+  const [phone, setPhone] = useState('')
+  const [message, setMessage] = useState('')
+  const [feedback, setFeedback] = useState('A solicitação será analisada manualmente pelo Foundy.')
+  const [payment, setPayment] = useState<ManualPaymentInfo | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const requestType = plano.id === 'safe_point' ? 'safe_point' : plano.id === 'company_pro' ? 'company_pro' : plano.id === 'event_plan' ? 'event_plan' : 'company_verified'
+  const requiresCompany = ['company_verified', 'safe_point', 'company_pro', 'event_plan'].includes(requestType)
+
+  async function submit() {
+    if (requiresCompany && sessao?.tipo_conta !== 'empresa') return setFeedback('Este recurso exige uma conta empresarial Foundy.')
+    if (!sessao && !email.includes('@')) return setFeedback('Informe um e-mail de contato para a análise.')
+    setLoading(true)
+    try {
+      const resposta = await criarSolicitacaoMonetizacao({
+        user_id: sessao?.usuario_id ?? null,
+        company_id: requiresCompany ? sessao?.usuario_id ?? null : null,
+        request_type: requestType,
+        contact_name: name,
+        contact_email: email || sessao?.email || null,
+        contact_phone: phone,
+        message,
+        desired_plan: plano.title,
+      })
+      setPayment(resposta.payment ?? null)
+      setFeedback(resposta.mensagem ?? 'Solicitação registrada com sucesso.')
+      window.setTimeout(() => onDone(resposta.mensagem ?? 'Solicitação registrada com sucesso.'), 1200)
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Não foi possível enviar a solicitação.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <ModalBase titulo={plano.title} subtitulo={plano.ethical_notice} onClose={onClose}>
+      <div className="grid gap-4 p-4">
+        <div className="rounded-2xl border border-foundy-border bg-foundy-background p-4">
+          <p className="text-xs font-black uppercase tracking-wide text-foundy-green">{plano.price}</p>
+          <p className="mt-2 text-sm leading-6 text-foundy-muted">{plano.description}</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Nome de contato"><input className="foundy-input" value={name} onChange={(event) => setName(event.target.value)} /></Field>
+          <Field label="E-mail de contato"><input className="foundy-input" value={email} onChange={(event) => setEmail(event.target.value)} type="email" /></Field>
+        </div>
+        <Field label="Telefone ou WhatsApp opcional"><input className="foundy-input" value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+        <Field label="Mensagem para análise"><textarea className="foundy-input min-h-24" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Conte rapidamente como sua empresa quer usar o Foundy." /></Field>
+        <p className="rounded-xl border border-foundy-blue/30 bg-foundy-blue/10 p-3 text-sm text-foundy-blue">{feedback}</p>
+        <PaymentInstructions payment={payment} />
+        <button className="h-11 rounded-xl bg-foundy-blue text-sm font-black text-white disabled:opacity-60" type="button" disabled={loading} onClick={() => void submit()}>{loading ? 'Enviando...' : 'Enviar solicitação manual'}</button>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalBoostAlerta({ alerta, sessao, onClose, onDone }: { alerta: LostAlert; sessao: FoundySession; onClose: () => void; onDone: (mensagem: string) => void }) {
+  const [boostType, setBoostType] = useState<'24h' | '3d' | '7d'>('24h')
+  const [feedback, setFeedback] = useState('O alerta gratuito continua ativo. O destaque apenas aumenta a visibilidade por tempo limitado.')
+  const [payment, setPayment] = useState<ManualPaymentInfo | null>(null)
+  const [loading, setLoading] = useState(false)
+  const plans = [
+    { id: '24h' as const, label: '24 horas', price: 490 },
+    { id: '3d' as const, label: '3 dias', price: 990 },
+    { id: '7d' as const, label: '7 dias', price: 1990 },
+  ]
+
+  async function submit() {
+    setLoading(true)
+    try {
+      const resposta = await solicitarBoostAlerta(alerta.id, sessao.usuario_id, boostType)
+      setPayment(resposta.payment ?? null)
+      setFeedback(resposta.mensagem ?? 'Alerta Ampliado solicitado.')
+      window.setTimeout(() => onDone(resposta.mensagem ?? 'Alerta Ampliado solicitado.'), 1400)
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Não foi possível solicitar o destaque.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <ModalBase titulo="Ampliar alcance do alerta" subtitulo={`Alerta: ${alerta.titulo}`} onClose={onClose}>
+      <div className="grid gap-4 p-4">
+        <p className="rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-4 text-sm text-foundy-green">
+          Este recurso não garante a recuperação do item. Ele apenas aumenta a visibilidade do alerta por tempo limitado.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {plans.map((plan) => <button className={`rounded-2xl border p-4 text-left ${boostType === plan.id ? 'border-foundy-blue bg-foundy-blue/15' : 'border-foundy-border bg-foundy-background'}`} key={plan.id} type="button" onClick={() => setBoostType(plan.id)}><strong className="block">{plan.label}</strong><span className="text-sm text-foundy-muted">{formatMoney(plan.price)}</span></button>)}
+        </div>
+        <p className="rounded-xl border border-foundy-blue/30 bg-foundy-blue/10 p-3 text-sm text-foundy-blue">{feedback}</p>
+        <PaymentInstructions payment={payment} />
+        <button className="h-11 rounded-xl bg-foundy-blue text-sm font-black text-white disabled:opacity-60" type="button" disabled={loading} onClick={() => void submit()}>{loading ? 'Solicitando...' : 'Solicitar Alerta Ampliado'}</button>
+      </div>
+    </ModalBase>
   )
 }
 
@@ -2375,7 +2770,7 @@ function ModalOnboarding({ onClose }: { onClose: () => void }) {
 
 function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { data: AdminData; adminId: string; onClose: () => void; onRefresh: () => void; embedded?: boolean }) {
   const [mensagem, setMensagem] = useState('Painel restrito ao administrador configurado.')
-  const [tab, setTab] = useState<'itens' | 'arquivados' | 'usuarios' | 'empresas' | 'denuncias' | 'denunciasResolvidas' | 'banidos'>('itens')
+  const [tab, setTab] = useState<'itens' | 'arquivados' | 'usuarios' | 'empresas' | 'monetizacao' | 'denuncias' | 'denunciasResolvidas' | 'banidos'>('itens')
   const [busca, setBusca] = useState('')
   const [detalhe, setDetalhe] = useState<{ titulo: string; dados: Record<string, unknown> } | null>(null)
 
@@ -2388,6 +2783,10 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
   const denunciasPosts = (data.denuncias_posts ?? []) as Record<string, unknown>[]
   const denunciasResolvidas = (data.denuncias_resolvidas ?? []) as Record<string, unknown>[]
   const banidos = (data.banidos ?? []) as Record<string, unknown>[]
+  const monetizacao = data.monetizacao
+  const solicitacoesMonetizacao = (monetizacao?.solicitacoes ?? []) as unknown as Record<string, unknown>[]
+  const apoiosMonetizacao = (monetizacao?.apoios ?? []) as unknown as Record<string, unknown>[]
+  const boostsMonetizacao = (monetizacao?.boosts ?? []) as unknown as Record<string, unknown>[]
   const termo = busca.trim().toLowerCase()
 
   function texto(row: Record<string, unknown>) {
@@ -2448,6 +2847,11 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
   const reportRows = filtrar([...denunciasChat.map((row) => ({ ...row, origem_denuncia: 'chat' })), ...denunciasPosts.map((row) => ({ ...row, origem_denuncia: 'post' }))])
   const resolvedReportRows = filtrar(denunciasResolvidas)
   const bannedRows = filtrar(banidos)
+  const monetizationRows = filtrar([
+    ...solicitacoesMonetizacao.map((row) => ({ ...row, origem_monetizacao: 'solicitacao' })),
+    ...apoiosMonetizacao.map((row) => ({ ...row, origem_monetizacao: 'apoio' })),
+    ...boostsMonetizacao.map((row) => ({ ...row, origem_monetizacao: 'boost' })),
+  ])
 
   function DetailButton({ row, title }: { row: Record<string, unknown>; title: string }) {
     return <button className="rounded-xl border border-foundy-border px-3 py-2 text-xs font-bold" type="button" onClick={() => setDetalhe({ titulo: title, dados: row })}>Ver detalhes</button>
@@ -2506,6 +2910,35 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
     })
   }
 
+  function atualizarMonetizacao(row: Record<string, unknown>, action: 'approve' | 'reject' | 'confirm' | 'cancel' | 'activate' | 'expire') {
+    const origem = row.origem_monetizacao
+    const motivo = window.prompt('Observação administrativa?', action === 'approve' || action === 'confirm' || action === 'activate' ? 'Pagamento manual conferido e benefício liberado.' : 'Solicitação analisada pela administração.') ?? ''
+    if (motivo.length < 3 || typeof row.id !== 'string') return
+    if (origem === 'solicitacao') {
+      const statusValue = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'cancelled'
+      void adminAtualizarSolicitacaoMonetizacao(adminId, row.id, statusValue, motivo).then((resposta) => {
+        setMensagem(resposta.mensagem)
+        onRefresh()
+      })
+      return
+    }
+    if (origem === 'apoio') {
+      const statusValue = action === 'confirm' ? 'confirmed' : action === 'cancel' ? 'cancelled' : 'pending'
+      void adminAtualizarApoioFoundy(adminId, row.id, statusValue, motivo).then((resposta) => {
+        setMensagem(resposta.mensagem)
+        onRefresh()
+      })
+      return
+    }
+    if (origem === 'boost') {
+      const statusValue = action === 'activate' ? 'active' : action === 'expire' ? 'expired' : 'cancelled'
+      void adminAtualizarBoostAlerta(adminId, row.id, statusValue, motivo).then((resposta) => {
+        setMensagem(resposta.mensagem)
+        onRefresh()
+      })
+    }
+  }
+
   const content = (
     <div className="grid gap-4 p-4">
       <p className="rounded-xl border border-foundy-border bg-foundy-background p-3 text-sm text-foundy-muted">{mensagem}</p>
@@ -2522,6 +2955,7 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
           ['arquivados', `Arquivados (${archivedRows.length})`],
           ['usuarios', `Usuários (${userRows.length})`],
           ['empresas', `Empresas (${companyRows.length})`],
+          ['monetizacao', `Monetização (${monetizationRows.length})`],
           ['denuncias', `Denúncias (${reportRows.length})`],
           ['denunciasResolvidas', `Resolvidas (${resolvedReportRows.length})`],
           ['banidos', `Banidos (${bannedRows.length})`],
@@ -2543,6 +2977,14 @@ function ModalAdmin({ data, adminId, onClose, onRefresh, embedded = false }: { d
       {tab === 'usuarios' ? <PanelList title="Usuários pessoais" empty="Nenhum usuário encontrado.">{userRows.map((row) => <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]" key={String(row.id)}><div><p className="text-sm font-black">{String(row.nome ?? row.email ?? row.id)}</p><p className="mt-1 text-xs text-foundy-muted">{String(row.email ?? 'sem e-mail')} | Karma: {String(row.pontos_luz ?? 0)} | Itens: {String(row.total_itens_postados ?? 0)}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.nome ?? row.email ?? row.id)} /><button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(String(row.id))}>Avisar</button><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => void aplicarMedida(String(row.id), 'chat')}>Bloquear chat</button><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(String(row.id), 'conta')}>Suspender conta</button></div></div>)}</PanelList> : null}
 
       {tab === 'empresas' ? <PanelList title="Contas empresariais" empty="Nenhuma empresa encontrada.">{companyRows.map((row) => <div className="grid gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 md:grid-cols-[1fr_auto]" key={String(row.id)}><div><p className="text-sm font-black">{String(row.empresa_nome ?? row.nome ?? row.email)}</p><p className="mt-1 text-xs text-foundy-muted">{String(row.email ?? 'sem e-mail')} | Catálogo público: {String(row.empresa_catalogo_publico ?? true)} | Itens: {String(row.total_itens_postados ?? 0)}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={String(row.empresa_nome ?? row.nome ?? row.id)} /><button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(String(row.id))}>Avisar</button><button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(String(row.id), 'conta')}>Suspender</button></div></div>)}</PanelList> : null}
+
+      {tab === 'monetizacao' ? <PanelList title="Monetização manual" empty="Nenhuma solicitação, apoio ou boost registrado.">{monetizationRows.map((row) => {
+        const origem = String(row.origem_monetizacao)
+        const id = String(row.id)
+        const title = origem === 'solicitacao' ? `Solicitação: ${String(row.request_type ?? 'plano')}` : origem === 'apoio' ? `Apoio: ${formatMoney(Number(row.amount_cents ?? 0))}` : `Boost: ${String(row.alerta_titulo ?? row.loss_alert_id ?? 'alerta')}`
+        const actor = String(row.empresa_nome ?? row.usuario_nome ?? row.payer_name ?? row.usuario_email ?? row.company_id ?? row.user_id ?? 'não identificado')
+        return <div className="grid gap-3 rounded-2xl border border-foundy-blue/30 bg-foundy-blue/10 p-3 md:grid-cols-[1fr_auto]" key={`${origem}-${id}`}><div><p className="text-sm font-black text-white">{title}</p><p className="mt-1 text-xs text-foundy-muted">Origem: {origem} | Status: {String(row.status ?? 'pendente')} | Responsável: {actor}</p><p className="mt-2 text-sm text-foundy-muted">{String(row.message ?? row.admin_notes ?? row.manual_payment_reference ?? 'Sem observação adicional.')}</p></div><div className="flex flex-wrap content-start gap-2"><DetailButton row={row} title={title} />{origem === 'solicitacao' ? <><button className="rounded-xl bg-foundy-green px-3 py-2 text-xs font-black text-slate-950" type="button" onClick={() => atualizarMonetizacao(row, 'approve')}>Aprovar</button><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => atualizarMonetizacao(row, 'reject')}>Rejeitar</button></> : null}{origem === 'apoio' ? <><button className="rounded-xl bg-foundy-green px-3 py-2 text-xs font-black text-slate-950" type="button" onClick={() => atualizarMonetizacao(row, 'confirm')}>Confirmar</button><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => atualizarMonetizacao(row, 'cancel')}>Cancelar</button></> : null}{origem === 'boost' ? <><button className="rounded-xl bg-foundy-green px-3 py-2 text-xs font-black text-slate-950" type="button" onClick={() => atualizarMonetizacao(row, 'activate')}>Ativar</button><button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => atualizarMonetizacao(row, 'expire')}>Expirar</button><button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-200" type="button" onClick={() => atualizarMonetizacao(row, 'cancel')}>Cancelar</button></> : null}</div></div>
+      })}</PanelList> : null}
 
       {tab === 'denuncias' ? <PanelList title="Denúncias de chat e posts" empty="Nenhuma denúncia registrada.">{reportRows.map((row) => { const denunciadoId = String(row.usuario_denunciado_id ?? ''); const origem = row.origem_denuncia === 'chat' ? 'chat' : 'post'; return <div className="grid gap-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3" key={`${origem}-${String(row.id)}`}><div><p className="text-sm font-black text-red-100">{origem === 'chat' ? 'Denúncia de chat' : 'Denúncia de post'}: {String(row.motivo_tipo ?? row.motivo ?? 'sem motivo')}</p><p className="mt-1 text-xs text-red-100/75">Denunciante: {String(row.denunciante_nome ?? row.denunciante_email ?? row.usuario_denunciante_id ?? 'não identificado')} | Denunciado: {String(row.denunciado_nome ?? row.denunciado_email ?? row.usuario_denunciado_id ?? 'não identificado')} | Item: {String(row.item_titulo ?? row.alerta_titulo ?? row.item_achado_id ?? row.alerta_perdido_id ?? 'não informado')}</p><p className="mt-2 text-sm text-red-100/85">{String(row.motivo ?? 'Sem descrição detalhada.')}</p></div><div className="flex flex-wrap gap-2"><DetailButton row={row} title={`Denúncia ${origem}`} /><button className="rounded-xl border border-foundy-green/50 px-3 py-2 text-xs font-black text-foundy-green" type="button" onClick={() => resolverDenuncia(row, origem)}>Resolvida</button>{denunciadoId ? <button className="rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-black text-amber-100" type="button" onClick={() => void avisar(denunciadoId, row, origem)}>Avisar</button> : null}{denunciadoId ? <button className="rounded-xl border border-red-400/50 px-3 py-2 text-xs font-black text-red-100" type="button" onClick={() => void aplicarMedida(denunciadoId, 'chat', row, origem)}>Bloquear chat</button> : null}{denunciadoId ? <button className="rounded-xl bg-red-500 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => void aplicarMedida(denunciadoId, 'conta', row, origem)}>Suspender conta</button> : null}</div></div> })}</PanelList> : null}
 

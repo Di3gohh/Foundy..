@@ -59,7 +59,9 @@ async def listar_empresas(q: str | None = Query(default=None, max_length=80)) ->
         supabase.table("usuarios")
         .select(
             "id,nome,foto_url,ocupacao,tipo_conta,empresa_nome,empresa_descricao,"
-            "empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_verificada,empresa_catalogo_publico,criado_em"
+            "empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_verificada,empresa_catalogo_publico,criado_em,"
+            "plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,public_slug,public_description,"
+            "public_opening_hours,public_address_visible,custom_logo_url"
         )
         .eq("tipo_conta", "empresa")
         .eq("empresa_catalogo_publico", True)

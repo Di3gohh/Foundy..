@@ -155,14 +155,29 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
     await _ensure_admin(admin_usuario_id)
     supabase = get_supabase()
 
-    usuarios, itens, itens_arquivados, alertas, alertas_arquivados, moderacao, denuncias_chat, denuncias_posts = await asyncio.gather(
+    (
+        usuarios,
+        itens,
+        itens_arquivados,
+        alertas,
+        alertas_arquivados,
+        moderacao,
+        denuncias_chat,
+        denuncias_posts,
+        monetization_requests,
+        support_contributions,
+        loss_alert_boosts,
+    ) = await asyncio.gather(
         supabase.table("usuarios")
         .select(
             "id,nome,email,pontos_luz,nivel_perfil,foto_url,ocupacao,tipo_conta,empresa_nome,empresa_descricao,"
             "empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_verificada,empresa_catalogo_publico,"
             "banido_ate,banimento_motivo,banimento_tipo,banido_permanente,chat_banido_ate,chat_banimento_motivo,"
             "chat_banido_permanente,ultimo_post_em,ultimo_aviso_moderacao,ultimo_aviso_em,criado_em,atualizado_em,"
-            "empresa_cnpj,empresa_cep,empresa_verificacao_status,ultimo_ip_hash"
+            "empresa_cnpj,empresa_cep,empresa_verificacao_status,ultimo_ip_hash,plan_type,plan_status,verified_badge,"
+            "is_safe_point,safe_point_status,plan_started_at,plan_expires_at,manual_payment_reference,admin_notes,"
+            "public_slug,public_description,public_whatsapp,public_email,public_opening_hours,public_address_visible,"
+            "custom_cover_url,custom_logo_url"
         )
         .is_("removido_em", "null")
         .order("criado_em", desc=True)
@@ -187,13 +202,13 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         .limit(160)
         .execute(),
         supabase.table("alertas_perdidos")
-        .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em")
+        .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em,boost_ativo,boost_expira_em,boost_tipo")
         .neq("status", "arquivado")
         .order("criado_em", desc=True)
         .limit(160)
         .execute(),
         supabase.table("alertas_perdidos")
-        .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em")
+        .select("id,usuario_id,titulo,descricao,categoria,subcategoria,local_descricao,imagem_url,raio_metros,status,criado_em,atualizado_em,boost_ativo,boost_expira_em,boost_tipo")
         .eq("status", "arquivado")
         .order("atualizado_em", desc=True)
         .limit(160)
@@ -217,6 +232,21 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
             "motivo,status,decisao_admin,criado_em,decidido_em,resolvida_em"
         )
         .order("criado_em", desc=True)
+        .limit(160)
+        .execute(),
+        supabase.table("monetization_requests")
+        .select("*")
+        .order("created_at", desc=True)
+        .limit(160)
+        .execute(),
+        supabase.table("support_contributions")
+        .select("*")
+        .order("created_at", desc=True)
+        .limit(160)
+        .execute(),
+        supabase.table("loss_alert_boosts")
+        .select("*")
+        .order("created_at", desc=True)
         .limit(160)
         .execute(),
     )
@@ -280,6 +310,23 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         row["alerta_titulo"] = alerta_titles.get(denuncia.get("alerta_perdido_id"))
         denuncias_posts_enriquecidas.append(row)
 
+    monetization_requests_enriquecidas = []
+    for request in monetization_requests.data:
+        row = _attach_user(request, users_by_id, "usuario", request.get("user_id"))
+        row = _attach_user(row, users_by_id, "empresa", request.get("company_id"))
+        monetization_requests_enriquecidas.append(row)
+
+    support_contributions_enriquecidas = []
+    for contribution in support_contributions.data:
+        row = _attach_user(contribution, users_by_id, "usuario", contribution.get("user_id"))
+        support_contributions_enriquecidas.append(row)
+
+    loss_alert_boosts_enriquecidos = []
+    for boost in loss_alert_boosts.data:
+        row = _attach_user(boost, users_by_id, "usuario", boost.get("user_id"))
+        row["alerta_titulo"] = alerta_titles.get(boost.get("loss_alert_id"))
+        loss_alert_boosts_enriquecidos.append(row)
+
     def is_denuncia_resolvida(row: dict) -> bool:
         return bool(row.get("resolvida_em") or row.get("status") in {"resolvida", "resolvido", "descartada", "rejeitado", "avisado", "banido"})
 
@@ -304,6 +351,13 @@ async def painel_admin(admin_usuario_id: UUID) -> dict:
         "denuncias_posts": denuncias_posts_abertas,
         "denuncias_resolvidas": sorted(denuncias_resolvidas, key=lambda row: str(row.get("decidido_em") or row.get("resolvida_em") or row.get("criado_em") or ""), reverse=True),
         "banidos": [row for row in usuarios_enriquecidos if row.get("banimento_ativo")],
+        "monetizacao": {
+            "solicitacoes": monetization_requests_enriquecidas,
+            "apoios": support_contributions_enriquecidas,
+            "boosts": loss_alert_boosts_enriquecidos,
+            "empresas_verificadas": [row for row in usuarios_enriquecidos if row.get("tipo_conta") == "empresa" and row.get("empresa_verificada")],
+            "pontos_seguros": [row for row in usuarios_enriquecidos if row.get("tipo_conta") == "empresa" and row.get("is_safe_point")],
+        },
     }
 
 

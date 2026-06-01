@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
     resend_from_email: str | None = Field(default=None, alias="RESEND_FROM_EMAIL")
     support_email: str = Field(default="foundy.company@gmail.com", alias="SUPPORT_EMAIL")
+    foundy_support_pix_key: str | None = Field(default=None, alias="FOUNDY_SUPPORT_PIX_KEY")
     admin_emails_raw: str = Field(default="foundy.company@gmail.com", alias="ADMIN_EMAILS")
     supabase_storage_bucket: str = Field(default="foundy-images", alias="SUPABASE_STORAGE_BUCKET")
     storage_max_image_bytes: int = Field(default=5_242_880, alias="STORAGE_MAX_IMAGE_BYTES")

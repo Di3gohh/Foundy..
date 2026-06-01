@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.db.pool import close_db, connect_to_db
 from app.db.supabase_client import close_supabase, init_supabase
-from app.routers import admin, empresas, itens_achados, karma, notificacoes, painel, processamento, usuarios
+from app.routers import admin, empresas, itens_achados, karma, monetizacao, notificacoes, painel, processamento, usuarios
 
 logger = logging.getLogger("foundy.api")
 
@@ -46,6 +46,7 @@ app.include_router(karma.router, prefix="/karma", tags=["Pontos de Luz"])
 app.include_router(painel.router, prefix="/painel", tags=["Painel do Usuario"])
 app.include_router(admin.router, prefix="/admin", tags=["Administracao"])
 app.include_router(empresas.router, prefix="/empresas", tags=["Empresas"])
+app.include_router(monetizacao.router, tags=["Monetizacao"])
 
 
 @app.exception_handler(Exception)

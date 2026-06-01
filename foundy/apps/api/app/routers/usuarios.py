@@ -97,6 +97,12 @@ def _session_payload(usuario: dict) -> dict[str, str]:
         "empresa_endereco_publico": usuario.get("empresa_endereco_publico") or "",
         "empresa_cidade": usuario.get("empresa_cidade") or "",
         "empresa_uf": usuario.get("empresa_uf") or "",
+        "plan_type": usuario.get("plan_type") or "free",
+        "plan_status": usuario.get("plan_status") or "inactive",
+        "verified_badge": str(bool(usuario.get("verified_badge", False))).lower(),
+        "is_safe_point": str(bool(usuario.get("is_safe_point", False))).lower(),
+        "safe_point_status": usuario.get("safe_point_status") or "none",
+        "public_slug": usuario.get("public_slug") or "",
         "banido_permanente": str(bool(usuario.get("banido_permanente", False))).lower(),
         "banido_ate": usuario.get("banido_ate") or "",
         "banimento_motivo": usuario.get("banimento_motivo") or "",
@@ -322,7 +328,7 @@ async def entrar(payload: UsuarioLogin, request: Request) -> dict[str, str]:
             "foto_url,ocupacao,aceita_notificacoes_email,papel,banido_ate,banimento_motivo,"
             "banido_permanente,banimento_tipo,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente,"
             "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
-            "empresa_cnpj,empresa_cep,empresa_verificacao_status"
+            "empresa_cnpj,empresa_cep,empresa_verificacao_status,plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,public_slug"
         )
         .eq("email", payload.email.lower())
         .is_("removido_em", "null")
@@ -389,6 +395,7 @@ async def atualizar_perfil(usuario_id: UUID, payload: UsuarioPerfilUpdate) -> di
         .select(
             "id,nome,email,nivel_perfil,pontos_luz,foto_url,ocupacao,aceita_notificacoes_email,papel,"
             "tipo_conta,empresa_nome,empresa_descricao,empresa_endereco_publico,empresa_cidade,empresa_uf,empresa_catalogo_publico,"
+            "plan_type,plan_status,verified_badge,is_safe_point,safe_point_status,public_slug,"
             "banido_ate,banimento_motivo,banido_permanente,chat_banido_ate,chat_banimento_motivo,chat_banido_permanente"
         )
         .eq("id", str(usuario_id))

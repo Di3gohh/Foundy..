@@ -41,6 +41,12 @@ export type FoundySession = {
   empresa_endereco_publico?: string
   empresa_cidade?: string
   empresa_uf?: string
+  plan_type?: string
+  plan_status?: string
+  verified_badge?: string
+  is_safe_point?: string
+  safe_point_status?: string
+  public_slug?: string
   banido_permanente?: string
   banido_ate?: string
   banimento_motivo?: string
@@ -99,6 +105,9 @@ export type LostAlert = {
   status: string
   criado_em: string
   atualizado_em?: string
+  boost_ativo?: boolean
+  boost_expira_em?: string | null
+  boost_tipo?: string | null
 }
 
 export type ClaimSummary = {
@@ -127,6 +136,16 @@ export type EmpresaFoundy = {
   empresa_uf?: string | null
   empresa_verificada?: boolean
   empresa_catalogo_publico?: boolean
+  plan_type?: string | null
+  plan_status?: string | null
+  verified_badge?: boolean
+  is_safe_point?: boolean
+  safe_point_status?: string | null
+  public_slug?: string | null
+  public_description?: string | null
+  public_opening_hours?: string | null
+  public_address_visible?: boolean
+  custom_logo_url?: string | null
 }
 
 export type EmpresaCatalogoItem = {
@@ -167,6 +186,102 @@ export type MensagemChat = {
   motivos_moderacao: string[]
   denunciar_extorsao_visivel: boolean
   criado_em: string
+}
+
+export type MonetizationPlan = {
+  id: string
+  title: string
+  price: string
+  amount_cents: number
+  description: string
+  benefits: string[]
+  ethical_notice: string
+  cta: string
+}
+
+export type MonetizationPlansResponse = {
+  titulo: string
+  subtitulo: string
+  support_email: string
+  plans: MonetizationPlan[]
+}
+
+export type ManualPaymentInfo = {
+  manual_payment_reference: string
+  support_email: string
+  support_pix_key?: string | null
+  instructions: string[]
+  message: string
+}
+
+export type MonetizationRequest = {
+  id: string
+  user_id?: string | null
+  company_id?: string | null
+  request_type: string
+  status: string
+  contact_name?: string | null
+  contact_email?: string | null
+  contact_phone?: string | null
+  message?: string | null
+  desired_plan?: string | null
+  created_at: string
+  updated_at?: string
+  reviewed_at?: string | null
+  admin_notes?: string | null
+  usuario_nome?: string | null
+  usuario_email?: string | null
+  empresa_nome?: string | null
+  empresa_email?: string | null
+  payment?: ManualPaymentInfo
+  mensagem?: string
+}
+
+export type SupportContribution = {
+  id: string
+  user_id?: string | null
+  amount_cents: number
+  currency: string
+  status: string
+  payment_method: string
+  manual_payment_reference?: string | null
+  payer_name?: string | null
+  payer_email?: string | null
+  message?: string | null
+  created_at: string
+  confirmed_at?: string | null
+  admin_notes?: string | null
+  usuario_nome?: string | null
+  usuario_email?: string | null
+  payment?: ManualPaymentInfo
+  mensagem?: string
+}
+
+export type LossAlertBoost = {
+  id: string
+  loss_alert_id: string
+  user_id?: string | null
+  boost_type: string
+  status: string
+  starts_at?: string | null
+  ends_at?: string | null
+  amount_cents: number
+  payment_method: string
+  manual_payment_reference?: string | null
+  created_at: string
+  admin_notes?: string | null
+  usuario_nome?: string | null
+  usuario_email?: string | null
+  alerta_titulo?: string | null
+  payment?: ManualPaymentInfo
+  mensagem?: string
+}
+
+export type CompanyPublicProfile = EmpresaFoundy & {
+  public_whatsapp?: string | null
+  public_email?: string | null
+  custom_cover_url?: string | null
+  catalogo?: EmpresaCatalogoItem[]
 }
 
 type ApiErrorPayload = {
@@ -610,6 +725,13 @@ export async function buscarPainelAdmin(usuarioId: string) {
     denuncias_resolvidas?: unknown[]
     itens_arquivados?: unknown[]
     banidos?: unknown[]
+    monetizacao?: {
+      solicitacoes?: MonetizationRequest[]
+      apoios?: SupportContribution[]
+      boosts?: LossAlertBoost[]
+      empresas_verificadas?: unknown[]
+      pontos_seguros?: unknown[]
+    }
   }>(
     `/admin/painel?${query.toString()}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
@@ -758,5 +880,204 @@ export async function denunciarPost(payload: {
       body: JSON.stringify(payload),
     },
     'Não foi possível enviar a denúncia do post.',
+  )
+}
+
+export async function buscarPlanosMonetizacao() {
+  return requestJson<MonetizationPlansResponse>(
+    '/monetization/plans',
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar os planos de monetização.',
+  )
+}
+
+export async function criarSolicitacaoMonetizacao(payload: {
+  user_id?: string | null
+  company_id?: string | null
+  request_type: 'company_verified' | 'safe_point' | 'company_pro' | 'event_plan' | 'sponsorship'
+  contact_name?: string | null
+  contact_email?: string | null
+  contact_phone?: string | null
+  message?: string | null
+  desired_plan?: string | null
+}) {
+  return requestJson<MonetizationRequest>(
+    '/monetization/requests',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    'Não foi possível enviar a solicitação de monetização.',
+  )
+}
+
+export async function listarMinhasSolicitacoesMonetizacao(userId: string) {
+  const query = new URLSearchParams({ user_id: userId })
+  return requestJson<MonetizationRequest[]>(
+    `/me/monetization/requests?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar suas solicitações.',
+  )
+}
+
+export async function criarApoioFoundy(payload: {
+  user_id?: string | null
+  amount_cents: number
+  payer_name?: string | null
+  payer_email?: string | null
+  message?: string | null
+  payment_method?: 'manual_pix' | 'manual_transfer' | 'future_gateway'
+}) {
+  return requestJson<SupportContribution>(
+    '/support/contributions',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    'Não foi possível registrar o apoio ao Foundy.',
+  )
+}
+
+export async function listarMeusApoiosFoundy(userId: string) {
+  const query = new URLSearchParams({ user_id: userId })
+  return requestJson<SupportContribution[]>(
+    `/me/support/contributions?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar seus apoios.',
+  )
+}
+
+export async function solicitarBoostAlerta(alertaId: string, userId: string, boostType: '24h' | '3d' | '7d') {
+  return requestJson<LossAlertBoost>(
+    `/loss-alerts/${alertaId}/boost`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ user_id: userId, boost_type: boostType }),
+    },
+    'Não foi possível solicitar o Alerta Ampliado.',
+  )
+}
+
+export async function listarMeusBoostsAlerta(userId: string) {
+  const query = new URLSearchParams({ user_id: userId })
+  return requestJson<LossAlertBoost[]>(
+    `/me/loss-alert-boosts?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar seus Alertas Ampliados.',
+  )
+}
+
+export async function adminAtualizarSolicitacaoMonetizacao(adminUsuarioId: string, requestId: string, statusValue: 'pending' | 'approved' | 'rejected' | 'cancelled', adminNotes?: string) {
+  return requestJson<{ mensagem: string }>(
+    `/admin/monetization/requests/${requestId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, status: statusValue, admin_notes: adminNotes ?? null }),
+    },
+    'Não foi possível atualizar a solicitação de monetização.',
+  )
+}
+
+export async function adminAtualizarApoioFoundy(adminUsuarioId: string, contributionId: string, statusValue: 'pending' | 'confirmed' | 'cancelled', adminNotes?: string) {
+  return requestJson<{ mensagem: string }>(
+    `/admin/support/contributions/${contributionId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, status: statusValue, admin_notes: adminNotes ?? null }),
+    },
+    'Não foi possível atualizar o apoio ao Foundy.',
+  )
+}
+
+export async function adminAtualizarBoostAlerta(adminUsuarioId: string, boostId: string, statusValue: 'pending_payment' | 'active' | 'expired' | 'cancelled', adminNotes?: string) {
+  return requestJson<{ mensagem: string }>(
+    `/admin/loss-alert-boosts/${boostId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ admin_usuario_id: adminUsuarioId, status: statusValue, admin_notes: adminNotes ?? null }),
+    },
+    'Não foi possível atualizar o Alerta Ampliado.',
+  )
+}
+
+export async function buscarPerfilPublicoEmpresa(slug: string) {
+  return requestJson<CompanyPublicProfile>(
+    `/companies/${encodeURIComponent(slug)}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar a página pública da empresa.',
+  )
+}
+
+export async function buscarPerfilEmpresa(empresaId: string) {
+  return requestJson<CompanyPublicProfile>(
+    `/companies/${empresaId}/public-profile`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar o perfil público da empresa.',
+  )
+}
+
+export async function atualizarPerfilPublicoEmpresa(empresaId: string, payload: {
+  usuario_id: string
+  public_slug?: string | null
+  public_description?: string | null
+  public_whatsapp?: string | null
+  public_email?: string | null
+  public_opening_hours?: string | null
+  public_address_visible?: boolean
+  custom_cover_url?: string | null
+  custom_logo_url?: string | null
+}) {
+  return requestJson<{ mensagem: string }>(
+    `/companies/${empresaId}/public-profile`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    'Não foi possível atualizar a página pública da empresa.',
+  )
+}
+
+export async function buscarRelatorioEmpresa(empresaId: string, usuarioId: string) {
+  const query = new URLSearchParams({ usuario_id: usuarioId })
+  return requestJson<{
+    company_id: string
+    total_itens: number
+    total_retirados: number
+    total_disponiveis: number
+    total_arquivados: number
+    taxa_retirada: number
+    periodo: string
+    observacao: string
+  }>(
+    `/companies/${empresaId}/reports/summary?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar o relatório empresarial.',
+  )
+}
+
+export async function buscarQrCodeEmpresa(empresaId: string, usuarioId: string) {
+  const query = new URLSearchParams({ usuario_id: usuarioId })
+  return requestJson<{ url: string; qr_content: string; print_text: string }>(
+    `/companies/${empresaId}/qr-code?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível gerar o QR Code da empresa.',
+  )
+}
+
+export async function buscarPontosSegurosFoundy(q?: string) {
+  const query = new URLSearchParams()
+  if (q) query.set('q', q)
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return requestJson<EmpresaFoundy[]>(
+    `/companies/safe-points/nearby${suffix}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar os Pontos Seguros Foundy.',
   )
 }
