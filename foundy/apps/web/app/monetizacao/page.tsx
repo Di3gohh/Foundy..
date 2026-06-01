@@ -110,7 +110,7 @@ export default function MonetizacaoPage() {
           <p className="foundy-eyebrow foundy-attention mt-6 text-sm font-semibold text-foundy-green">Apoio voluntário</p>
           <h1 className="mt-2 text-4xl font-black">Apoie o Foundy sem criar paywall para recuperar itens.</h1>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-foundy-muted">
-            Esta página mostra somente o Apoie Foundy. Empresa Verificada, Ponto Seguro e Alerta Ampliado aparecem dentro dos fluxos corretos do site, no contexto de empresas, mapa e alertas de perda.
+            Esta página mostra somente o apoio voluntário ao Foundy, sem misturar ofertas de outros fluxos.
           </p>
         </div>
 

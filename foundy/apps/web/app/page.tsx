@@ -1798,7 +1798,7 @@ function MonetizacaoSection({
         <p className="foundy-eyebrow foundy-attention text-sm font-semibold text-foundy-green">Apoio voluntário</p>
         <h1 className="mt-2 text-3xl font-black">Apoie o Foundy sem criar paywall para recuperar itens.</h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-foundy-muted">
-          Esta aba fica limpa de propósito: aqui aparece apenas o apoio voluntário. Empresa Verificada, Ponto Seguro e Alerta Ampliado aparecem nos lugares onde fazem sentido para cada usuário.
+          Esta aba fica limpa de propósito: aqui aparece apenas o apoio voluntário, sem misturar ofertas de outros fluxos.
         </p>
       </div>
       <article className="foundy-item-card rounded-3xl border border-foundy-green/30 bg-foundy-surface p-5">
