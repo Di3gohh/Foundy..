@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.db.supabase_client import get_supabase
+from app.services.billing_service import company_catalog_limit, company_plan_name
 from app.services.storage_service import store_public_image_if_needed
 
 
@@ -37,7 +38,7 @@ async def _ensure_empresa_owner(empresa_id: UUID, usuario_id: UUID) -> dict:
     supabase = get_supabase()
     response = await (
         supabase.table("usuarios")
-        .select("id,tipo_conta,empresa_nome,empresa_endereco_publico")
+        .select("id,tipo_conta,empresa_nome,empresa_endereco_publico,plan_type,plan_status")
         .eq("id", str(empresa_id))
         .eq("id", str(usuario_id))
         .is_("removido_em", "null")
@@ -94,8 +95,26 @@ async def listar_catalogo_empresa(empresa_id: UUID, status_item: CatalogStatus |
 
 @router.post("/{empresa_id}/catalogo", status_code=status.HTTP_201_CREATED)
 async def criar_item_catalogo(empresa_id: UUID, payload: EmpresaCatalogoItemCreate) -> dict:
-    await _ensure_empresa_owner(empresa_id, payload.usuario_id)
+    empresa = await _ensure_empresa_owner(empresa_id, payload.usuario_id)
     supabase = get_supabase()
+    limite = company_catalog_limit(empresa.get("plan_type"), empresa.get("plan_status"))
+    if limite is not None:
+        ativos = await (
+            supabase.table("empresa_catalogo_itens")
+            .select("id", count="exact")
+            .eq("empresa_usuario_id", str(empresa_id))
+            .eq("status", "disponivel")
+            .execute()
+        )
+        if (ativos.count or 0) >= limite:
+            plano = company_plan_name(empresa.get("plan_type"))
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"O plano {plano} permite até {limite} itens ativos no catálogo. "
+                    "Arquive ou marque itens como retirados, ou solicite um upgrade empresarial."
+                ),
+            )
     imagem_publica = None if payload.categoria == "documentos" else payload.imagem_url
     if imagem_publica:
         try:

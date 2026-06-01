@@ -24,12 +24,34 @@ O Foundy nunca deve cobrar para recuperar item, abrir chat, responder desafio ou
 
 ## Fase 2 preparada
 
-- Estrutura de membros de empresa.
-- Estrutura de planos para eventos.
+- Planos empresariais organizados: Empresa Básica, Empresa Verificada, Empresa Pro e Eventos e Instituições.
+- Empresa Básica gratuita ativa no cadastro empresarial, com limite real de até 5 itens ativos no catálogo.
+- Solicitação de Empresa Verificada, Empresa Pro e Eventos e Instituições criada durante o cadastro empresarial quando o usuário escolhe um plano pago.
+- Endpoints protegidos para membros de empresa no plano Pro.
+- Endpoints protegidos para planos de eventos no plano Eventos e Instituições.
 - Estrutura de assinaturas futuras.
 - Relatório inicial de catálogo empresarial.
 - QR/link público para empresas.
 - Página pública de empresa por slug.
+
+## Organização comercial por contexto
+
+A aba `Apoiar` deve mostrar somente `Apoie o Foundy`. As outras ofertas aparecem onde fazem sentido:
+
+- `Empresa Verificada`, `Empresa Pro` e `Eventos e Instituições`: cadastro empresarial, rodapé da aba Empresas e painel Meu catálogo.
+- `Ponto Seguro Foundy`: abaixo do mapa, na aba Mapa.
+- `Alerta Ampliado`: feed principal e modal de postagem de perda.
+
+Essa separação reduz poluição visual, melhora conversão e evita comunicação enganosa.
+
+## Planos empresariais aplicados
+
+| Plano | Preço inicial | Público | Implementação atual |
+| --- | --- | --- | --- |
+| Empresa Básica | Grátis | Pequenos comércios | Página pública, catálogo público ou interno e até 5 itens ativos. |
+| Empresa Verificada | R$ 49,90/mês | Comércios locais | Solicitação manual, CNPJ para análise, selo, QR Code e maior limite de catálogo após aprovação. |
+| Empresa Pro | R$ 99,90 a R$ 149,90/mês | Escolas, academias, condomínios | Solicitação manual, catálogo sem limite fixo, relatórios e endpoints de equipe protegidos por plano ativo. |
+| Eventos e Instituições | R$ 199 a R$ 499 por evento/mês | Eventos, feiras, igrejas, clubes | Solicitação manual e endpoints de criação/listagem de eventos protegidos por plano ativo. |
 
 ## Variáveis de ambiente novas
 
@@ -60,6 +82,11 @@ Se `FOUNDY_SUPPORT_PIX_KEY` não existir, a API orienta o usuário a concluir pe
 - `GET /companies/safe-points/nearby`
 - `GET /companies/{id}/reports/summary`
 - `GET /companies/{id}/qr-code`
+- `GET /companies/{id}/members`
+- `POST /companies/{id}/members`
+- `PATCH /companies/{id}/members/{member_id}`
+- `GET /companies/{id}/events`
+- `POST /companies/{id}/events`
 
 ## Banco de dados
 

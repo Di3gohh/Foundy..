@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.security import hash_password, verify_password
 from app.db.supabase_client import get_supabase
 from app.services.email_service import has_resend_settings, has_smtp_settings, send_support_email, send_verification_email
+from app.services.billing_service import manual_reference
 from app.services.storage_service import store_public_image_if_needed
 
 
@@ -34,6 +35,7 @@ class UsuarioCadastro(BaseModel):
     empresa_catalogo_publico: bool = True
     empresa_cnpj: str | None = Field(default=None, min_length=14, max_length=20)
     empresa_cep: str | None = Field(default=None, min_length=8, max_length=12)
+    company_plan_interest: Literal["company_free", "company_verified", "company_pro", "event_plan"] = "company_free"
 
 
 class UsuarioLogin(BaseModel):
@@ -212,7 +214,7 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
     now_iso = datetime.now(timezone.utc).isoformat()
 
     try:
-        await supabase.table("usuarios").insert(
+        created = await supabase.table("usuarios").insert(
             {
                 "nome": payload.nome.strip(),
                 "email": email_normalizado,
@@ -239,6 +241,8 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
                 "empresa_verificacao_status": "pendente" if payload.tipo_conta == "empresa" else None,
                 "empresa_verificada": False,
                 "empresa_catalogo_publico": payload.empresa_catalogo_publico,
+                "plan_type": "free",
+                "plan_status": "active" if payload.tipo_conta == "empresa" else "inactive",
                 "ultimo_ip_hash": _ip_hash(_client_ip(request)),
             }
         ).execute()
@@ -248,6 +252,39 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
             detail="Não foi possível cadastrar este e-mail. Verifique se ele já foi usado anteriormente.",
         ) from exc
 
+    novo_usuario_id = created.data[0]["id"] if created.data else None
+    if not novo_usuario_id:
+        novo_usuario = await (
+            supabase.table("usuarios")
+            .select("id")
+            .eq("email", email_normalizado)
+            .is_("removido_em", "null")
+            .limit(1)
+            .execute()
+        )
+        novo_usuario_id = novo_usuario.data[0]["id"] if novo_usuario.data else None
+
+    plano_empresa = payload.company_plan_interest if payload.tipo_conta == "empresa" else "company_free"
+    if payload.tipo_conta == "empresa" and plano_empresa != "company_free" and novo_usuario_id:
+        reference = manual_reference("PLAN")
+        await (
+            supabase.table("monetization_requests")
+            .insert(
+                {
+                    "user_id": novo_usuario_id,
+                    "company_id": novo_usuario_id,
+                    "request_type": plano_empresa,
+                    "status": "pending",
+                    "contact_name": payload.empresa_nome.strip() if payload.empresa_nome else payload.nome.strip(),
+                    "contact_email": email_normalizado,
+                    "message": "Solicitação criada durante o cadastro empresarial.",
+                    "desired_plan": plano_empresa,
+                    "admin_notes": f"Referência manual inicial: {reference}",
+                }
+            )
+            .execute()
+        )
+
     if payload.tipo_conta == "empresa":
         background_tasks.add_task(
             send_support_email,
@@ -255,6 +292,7 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
             (
                 "Uma empresa solicitou conta no Foundy.\n\n"
                 f"Empresa: {payload.empresa_nome}\n"
+                f"Plano de interesse: {plano_empresa}\n"
                 f"CNPJ informado: {payload.empresa_cnpj}\n"
                 f"CEP informado: {payload.empresa_cep}\n"
                 f"Endereço público: {payload.empresa_endereco_publico}\n"

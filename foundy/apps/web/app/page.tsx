@@ -295,6 +295,114 @@ function formatMoney(cents: number) {
   return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
+const supportPlanFallback: MonetizationPlan = {
+  id: 'support_foundy',
+  category: 'support',
+  title: 'Apoie o Foundy',
+  price: 'R$ 3, R$ 5, R$ 10, R$ 20 ou livre',
+  amount_cents: 0,
+  description: 'Contribuição voluntária para manter servidores, moderação, e-mails e melhorias da comunidade.',
+  benefits: ['Mantém o Foundy gratuito', 'Ajuda a segurança e a moderação', 'Apoia melhorias sem cobrar para recuperar itens'],
+  ethical_notice: 'Apoiar é opcional e não altera suas chances de recuperar ou devolver um item.',
+  cta: 'Apoiar o Foundy',
+}
+
+const safePointPlanFallback: MonetizationPlan = {
+  id: 'safe_point',
+  category: 'safe_point',
+  title: 'Ponto Seguro Foundy',
+  price: 'a partir de R$ 29,90/mês',
+  amount_cents: 2990,
+  description: 'Locais parceiros para devoluções em ambiente público, movimentado e orientado pelo Protocolo Foundy.',
+  benefits: ['Selo Ponto Seguro Foundy', 'Orientação no mapa', 'Página pública com horário', 'QR Code para balcão ou recepção'],
+  ethical_notice: 'O Ponto Seguro não substitui cautela: encontros continuam sendo responsabilidade dos usuários.',
+  cta: 'Quero ser um Ponto Seguro',
+}
+
+const lossAlertBoostPlanFallback: MonetizationPlan = {
+  id: 'loss_alert_boost',
+  category: 'loss_alert',
+  title: 'Alerta Ampliado',
+  price: 'R$ 4,90 por 24h; R$ 9,90 por 3 dias; R$ 19,90 por 7 dias',
+  amount_cents: 490,
+  description: 'Destaque temporário para alertas de perda criados gratuitamente.',
+  benefits: ['Mais visibilidade no feed de perdas', 'Badge de Alerta Ampliado', 'Duração limitada e transparente'],
+  ethical_notice: 'Não garante recuperação. Apenas aumenta a visibilidade do alerta por tempo limitado.',
+  cta: 'Ampliar alcance',
+}
+
+const companyPlanFallbacks: MonetizationPlan[] = [
+  {
+    id: 'company_free',
+    category: 'company',
+    plan_type: 'free',
+    title: 'Empresa Básica',
+    price: 'Grátis',
+    amount_cents: 0,
+    item_limit: 5,
+    description: 'Para pequenos comércios começarem a organizar achados e perdidos.',
+    benefits: ['Página pública', 'Até 5 itens ativos', 'Badge de empresa cadastrada', 'Catálogo público ou interno'],
+    ethical_notice: 'A conta começa como Básica. Recursos pagos dependem de análise manual.',
+    cta: 'Criar conta empresarial grátis',
+  },
+  {
+    id: 'company_verified',
+    category: 'company',
+    plan_type: 'verified',
+    title: 'Empresa Verificada',
+    price: 'R$ 49,90/mês',
+    amount_cents: 4990,
+    item_limit: 200,
+    description: 'CNPJ analisado, selo de confiança, QR Code e catálogo completo.',
+    benefits: ['Selo Empresa Verificada', 'QR Code da empresa', 'Maior limite de itens', 'Mais destaque na aba Empresas'],
+    ethical_notice: 'O selo não substitui retirada presencial segura nem garante estado de conservação.',
+    cta: 'Quero ser Empresa Verificada',
+  },
+  {
+    id: 'company_pro',
+    category: 'company',
+    plan_type: 'pro',
+    title: 'Empresa Pro',
+    price: 'R$ 99,90 a R$ 149,90/mês',
+    amount_cents: 9990,
+    item_limit: null,
+    description: 'Para escolas, academias, condomínios e instituições com operação recorrente.',
+    benefits: ['Catálogo sem limite fixo', 'Histórico e relatórios', 'Status retirado/disponível', 'Implantação assistida de equipe'],
+    ethical_notice: 'Recursos de equipe são ativados com implantação assistida para proteger o catálogo.',
+    cta: 'Falar sobre Empresa Pro',
+  },
+  {
+    id: 'event_plan',
+    category: 'company',
+    plan_type: 'event',
+    title: 'Eventos e Instituições',
+    price: 'R$ 199 a R$ 499 por evento/mês',
+    amount_cents: 19900,
+    item_limit: 500,
+    description: 'Para eventos, feiras, igrejas, clubes e ações temporárias.',
+    benefits: ['Página temporária', 'QR Code do evento', 'Painel de atendimento', 'Relatório final'],
+    ethical_notice: 'Eventos exigem política clara de retirada presencial e atendimento no local.',
+    cta: 'Solicitar plano para evento',
+  },
+]
+
+function getSupportPlan(plans: MonetizationPlansResponse | null) {
+  return plans?.support_plan ?? plans?.plans.find((plan) => plan.id === 'support_foundy') ?? supportPlanFallback
+}
+
+function getSafePointPlan(plans: MonetizationPlansResponse | null) {
+  return plans?.safe_point_plan ?? plans?.plans.find((plan) => plan.id === 'safe_point') ?? safePointPlanFallback
+}
+
+function getLossBoostPlan(plans: MonetizationPlansResponse | null) {
+  return plans?.loss_alert_boost_plan ?? plans?.plans.find((plan) => plan.id === 'loss_alert_boost') ?? lossAlertBoostPlanFallback
+}
+
+function getCompanyPlans(plans: MonetizationPlansResponse | null) {
+  const list = plans?.company_plans?.length ? plans.company_plans : plans?.plans.filter((plan) => plan.category === 'company' || plan.id.startsWith('company_') || plan.id === 'event_plan')
+  return list?.length ? list : companyPlanFallbacks
+}
+
 function textoPesquisavelItem(item: ItemAchado | LostAlert) {
   return `${item.titulo} ${item.descricao} ${'subcategoria' in item ? (item.subcategoria ?? '') : ''} ${'hashtags_ia' in item ? (item.hashtags_ia ?? []).join(' ') : ''}`.toLowerCase()
 }
@@ -1011,7 +1119,34 @@ export default function Home() {
         ) : activeTab === 'usuario' && sessao ? (
           <UserSection painel={painel} sessao={sessao} onOpenProfile={() => setModalAtivo('perfil')} onOpenChats={() => setModalAtivo('chats')} onDeleteItem={(id) => void apagarMeuItem(id)} onDeleteAlert={(id) => void apagarMeuAlerta(id)} onBoostAlert={(alerta) => { setBoostAlerta(alerta); setModalAtivo('boost-alerta') }} />
         ) : activeTab === 'empresas' ? (
-          <EmpresasSection empresas={empresas} busca={empresaBusca} catalogo={catalogoEmpresa} empresaSelecionada={empresaSelecionada} mensagem={catalogoMensagem} onBuscaChange={setEmpresaBusca} onSelecionarEmpresa={(empresa) => void abrirEmpresa(empresa)} onVoltar={() => { setEmpresaSelecionada(null); setCatalogoEmpresa([]) }} />
+          <EmpresasSection
+            empresas={empresas}
+            busca={empresaBusca}
+            catalogo={catalogoEmpresa}
+            empresaSelecionada={empresaSelecionada}
+            mensagem={catalogoMensagem}
+            planos={planosMonetizacao}
+            sessao={sessao}
+            onCarregarPlanos={carregarPlanosMonetizacao}
+            onBuscaChange={setEmpresaBusca}
+            onSelecionarEmpresa={(empresa) => void abrirEmpresa(empresa)}
+            onVoltar={() => { setEmpresaSelecionada(null); setCatalogoEmpresa([]) }}
+            onCriarEmpresa={() => { setMensagemSistema('Na tela de cadastro, selecione "Empresa" e escolha o plano ideal.'); setModalAtivo('auth') }}
+            onSolicitarPlano={(plan) => {
+              if (plan.id === 'company_free') {
+                setMensagemSistema('Crie uma conta empresarial gratuita e selecione Empresa Básica no cadastro.')
+                setModalAtivo('auth')
+                return
+              }
+              if (!sessao || sessao.tipo_conta !== 'empresa') {
+                setMensagemSistema('Este plano exige uma conta empresarial. Crie ou entre com uma conta de empresa para solicitar.')
+                setModalAtivo('auth')
+                return
+              }
+              setPlanoSelecionado(plan)
+              setModalAtivo('solicitar-monetizacao')
+            }}
+          />
         ) : activeTab === 'monetizacao' ? (
           <MonetizacaoSection
             planos={planosMonetizacao}
@@ -1028,7 +1163,16 @@ export default function Home() {
             }}
           />
         ) : activeTab === 'empresaPainel' && sessao?.tipo_conta === 'empresa' ? (
-          <EmpresaPainelSection sessao={sessao} onMensagem={setMensagemSistema} />
+          <EmpresaPainelSection
+            sessao={sessao}
+            planos={planosMonetizacao}
+            onCarregarPlanos={carregarPlanosMonetizacao}
+            onMensagem={setMensagemSistema}
+            onSolicitarPlano={(plan) => {
+              setPlanoSelecionado(plan)
+              setModalAtivo('solicitar-monetizacao')
+            }}
+          />
         ) : activeTab === 'admin' && sessao && adminData ? (
           <AdminSection data={adminData} adminId={sessao.usuario_id} onRefresh={async () => setAdminData(await buscarPainelAdmin(sessao.usuario_id))} />
         ) : (
@@ -1045,10 +1189,23 @@ export default function Home() {
             feedItemRefs={feedItemRefs}
             mensagemSistema={mensagemSistema}
             carregando={carregando}
+            planos={planosMonetizacao}
             getDistance={getDistance}
             onSelectItem={setItemSelecionado}
             onViewItem={verItemNoFeed}
             onFeedModeChange={setFeedMode}
+            onCarregarPlanos={carregarPlanosMonetizacao}
+            onOpenLossPost={() => requireSession('perdi', 'Para criar alerta de perda é necessário entrar.')}
+            onRequestSafePoint={() => {
+              const plan = getSafePointPlan(planosMonetizacao)
+              if (!sessao || sessao.tipo_conta !== 'empresa') {
+                setMensagemSistema('Ponto Seguro Foundy é uma oferta para conta empresarial. Crie ou entre com uma conta de empresa para solicitar.')
+                setModalAtivo('auth')
+                return
+              }
+              setPlanoSelecionado(plan)
+              setModalAtivo('solicitar-monetizacao')
+            }}
             onSearch={() => setModalAtivo('busca')}
             onNearby={obterMeuLocal}
             onRefresh={() => { void carregarItens(localUsuario?.latitude, localUsuario?.longitude); void carregarPerdas(localUsuario?.latitude, localUsuario?.longitude) }}
@@ -1095,7 +1252,7 @@ export default function Home() {
         />
       ) : null}
       {modalAtivo === 'item' && sessao ? <ModalItemAchado sessao={sessao} onClose={() => setModalAtivo(null)} onPublicado={(item) => { setItens((atuais) => [item, ...atuais]); setItemSelecionado(item); setModalAtivo(null); void carregarPainel(sessao) }} /> : null}
-      {modalAtivo === 'perdi' && sessao ? <ModalPerdiAlgo sessao={sessao} pontoInicial={localUsuario ?? defaultPoint} onClose={() => setModalAtivo(null)} onCriado={(mensagem) => { setMensagemSistema(mensagem); setModalAtivo(null); void carregarPainel(sessao); void carregarPerdas(localUsuario?.latitude, localUsuario?.longitude) }} /> : null}
+      {modalAtivo === 'perdi' && sessao ? <ModalPerdiAlgo sessao={sessao} pontoInicial={localUsuario ?? defaultPoint} onClose={() => setModalAtivo(null)} onCriado={(mensagem, alerta, abrirBoost) => { setMensagemSistema(mensagem); setModalAtivo(null); if (alerta) setPerdasProximas((atuais) => [alerta, ...atuais.filter((item) => item.id !== alerta.id)]); void carregarPainel(sessao); void carregarPerdas(localUsuario?.latitude, localUsuario?.longitude); if (alerta && abrirBoost) { setBoostAlerta(alerta); setModalAtivo('boost-alerta') } }} /> : null}
       {modalAtivo === 'desafio' && itemSelecionado ? <ModalDesafio item={itemSelecionado} resposta={respostaDesafio} onRespostaChange={setRespostaDesafio} onConfirmar={() => void confirmarRespostaDesafio()} onClose={() => setModalAtivo(null)} /> : null}
       {modalAtivo === 'resposta-enviada' ? <ModalRespostaEnviada onClose={() => setModalAtivo(null)} /> : null}
       {modalAtivo === 'aguardando' ? <ModalAguardandoValidacao reivindicacaoId={reivindicacaoId} claim={claimAtual} onClose={() => setModalAtivo(null)} onValidar={(aprovada) => void validarRespostaComoEncontrador(aprovada)} /> : null}
@@ -1180,11 +1337,15 @@ function RadarSection({
   mapRef,
   mensagemSistema,
   carregando,
+  planos,
   getDistance,
   onSelectItem,
   onSearch,
   onNearby,
   onRefresh,
+  onCarregarPlanos,
+  onOpenLossPost,
+  onRequestSafePoint,
   onClaim,
   onFocusItem,
   onFocusLoss,
@@ -1210,10 +1371,14 @@ function RadarSection({
   feedItemRefs: MutableRefObject<Record<string, HTMLElement | null>>
   mensagemSistema: string
   carregando: boolean
+  planos: MonetizationPlansResponse | null
   getDistance: (item: ItemAchado) => number | null
   onSelectItem: (item: ItemAchado) => void
   onViewItem: (item: ItemAchado) => void
   onFeedModeChange: (mode: FeedMode) => void
+  onCarregarPlanos: () => void
+  onOpenLossPost: () => void
+  onRequestSafePoint: () => void
   onSearch: () => void
   onNearby: () => void
   onRefresh: () => void
@@ -1227,6 +1392,11 @@ function RadarSection({
   onReportLoss: (alerta: LostAlert) => void
   currentUserId: string | null
 }) {
+  useEffect(() => {
+    if (!planos) onCarregarPlanos()
+  }, [onCarregarPlanos, planos])
+  const safePointPlan = getSafePointPlan(planos)
+  const boostPlan = getLossBoostPlan(planos)
   return (
     <>
       <div ref={mapRef} className="foundy-hero-panel relative overflow-hidden rounded-3xl border border-foundy-border bg-foundy-surface p-4 shadow-2xl shadow-black/25 sm:p-5">
@@ -1257,6 +1427,8 @@ function RadarSection({
         </div>
       </div>
 
+      {viewMode === 'mapa' ? <SafePointMapOffer plan={safePointPlan} onRequest={onRequestSafePoint} /> : null}
+
       {viewMode === 'feed' ? <section className="grid gap-4" aria-label="Feed principal Foundy">
         <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1268,6 +1440,7 @@ function RadarSection({
             <button className={`rounded-xl px-4 py-2 text-sm font-black ${feedMode === 'perdidos' ? 'bg-red-500 text-white' : 'text-foundy-muted'}`} type="button" onClick={() => onFeedModeChange('perdidos')}>Perdas ({perdas.length}/{totalPerdas})</button>
           </div>
         </div>
+        <LossBoostFeedOffer plan={boostPlan} onOpenLossPost={onOpenLossPost} />
         {feedMode === 'achados' ? itens.map((item) => (
           <ItemCard
             item={item}
@@ -1298,6 +1471,47 @@ function RadarSection({
         {carregando ? <p className="text-sm text-foundy-muted">Atualizando feed...</p> : null}
       </section> : null}
     </>
+  )
+}
+
+function SafePointMapOffer({ plan, onRequest }: { plan: MonetizationPlan; onRequest: () => void }) {
+  return (
+    <aside className="foundy-item-card overflow-hidden rounded-3xl border border-foundy-green/30 bg-foundy-surface">
+      <div className="grid gap-4 p-5 md:grid-cols-[1fr_auto] md:items-center">
+        <div>
+          <p className="foundy-eyebrow text-sm font-semibold text-foundy-green">Oferta no contexto certo</p>
+          <h2 className="mt-1 text-2xl font-black">Seja um Ponto Seguro Foundy</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-foundy-muted">{plan.description}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {plan.benefits.slice(0, 3).map((benefit) => <span className="rounded-full border border-foundy-border bg-foundy-background px-3 py-1 text-xs font-bold text-foundy-muted" key={benefit}>{benefit}</span>)}
+          </div>
+        </div>
+        <div className="rounded-3xl border border-foundy-border bg-foundy-background p-4 md:min-w-72">
+          <p className="text-xs font-black uppercase tracking-wide text-foundy-green">{plan.price}</p>
+          <p className="mt-2 text-sm leading-6 text-foundy-muted">{plan.ethical_notice}</p>
+          <button className="mt-4 h-11 w-full rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={onRequest}>{plan.cta}</button>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+function LossBoostFeedOffer({ plan, onOpenLossPost }: { plan: MonetizationPlan; onOpenLossPost: () => void }) {
+  return (
+    <aside className="foundy-boost-card rounded-3xl border border-foundy-blue/30 bg-foundy-surface p-5">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="foundy-eyebrow text-sm font-semibold text-foundy-blue">Alcance opcional para quem perdeu</p>
+          <h2 className="mt-1 text-2xl font-black">{plan.title}</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-foundy-muted">{plan.description}</p>
+          <p className="mt-2 text-xs font-bold text-foundy-muted">{plan.price}</p>
+        </div>
+        <button className="foundy-pressable inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-foundy-blue px-5 text-sm font-black text-white" type="button" onClick={onOpenLossPost}>
+          <Sparkles size={17} /> Postar perda e ampliar depois
+        </button>
+      </div>
+      <p className="mt-3 rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-3 text-sm text-foundy-green">{plan.ethical_notice}</p>
+    </aside>
   )
 }
 
@@ -1576,46 +1790,37 @@ function MonetizacaoSection({
     if (!planos) onCarregar()
   }, [onCarregar, planos])
 
-  const fallback: MonetizationPlan[] = [
-    { id: 'company_verified', title: 'Empresa Verificada', price: 'R$ 49,90/mês', amount_cents: 4990, description: 'Selo de confiança, página pública, QR Code e mais visibilidade para catálogos institucionais.', benefits: ['Selo de Empresa Verificada', 'Página pública personalizada', 'QR Code para recepção', 'Suporte prioritário'], ethical_notice: 'O selo indica análise cadastral, mas usuários ainda devem seguir o Protocolo Foundy.', cta: 'Quero verificar minha empresa' },
-    { id: 'safe_point', title: 'Ponto Seguro Foundy', price: 'a partir de R$ 29,90/mês', amount_cents: 2990, description: 'Locais parceiros para devoluções em ambiente público e monitorado.', benefits: ['Selo Ponto Seguro', 'Destaque no mapa', 'Horário público de atendimento'], ethical_notice: 'Combine devoluções em locais públicos e evite dados pessoais sensíveis.', cta: 'Quero ser Ponto Seguro' },
-    { id: 'support_foundy', title: 'Apoie o Foundy', price: 'R$ 3, R$ 5, R$ 10, R$ 20 ou livre', amount_cents: 0, description: 'Contribuição voluntária para manter servidores, segurança e melhorias.', benefits: ['Mantém o Foundy gratuito', 'Ajuda moderação e segurança', 'Apoia melhorias da comunidade'], ethical_notice: 'Apoiar é opcional e não altera suas chances de recuperar ou devolver um item.', cta: 'Apoiar o Foundy' },
-    { id: 'loss_alert_boost', title: 'Alerta Ampliado', price: 'R$ 4,90 por 24h; R$ 9,90 por 3 dias; R$ 19,90 por 7 dias', amount_cents: 490, description: 'Destaque leve e temporário para alertas de perda.', benefits: ['Mais visibilidade no feed de perdas', 'Badge de Alerta Ampliado', 'Duração limitada'], ethical_notice: 'Não garante recuperação. Apenas aumenta a visibilidade por tempo limitado.', cta: 'Ampliar um alerta de perda' },
-  ]
-  const lista = planos?.plans ?? fallback
+  const plan = getSupportPlan(planos)
 
   return (
     <section className="grid gap-5">
       <div className="foundy-hero-panel rounded-3xl border border-foundy-border bg-foundy-surface p-5">
-        <p className="foundy-eyebrow foundy-attention text-sm font-semibold text-foundy-green">Crescimento responsável</p>
-        <h1 className="mt-2 text-3xl font-black">Monetização sem paywall para recuperar itens.</h1>
+        <p className="foundy-eyebrow foundy-attention text-sm font-semibold text-foundy-green">Apoio voluntário</p>
+        <h1 className="mt-2 text-3xl font-black">Apoie o Foundy sem criar paywall para recuperar itens.</h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-foundy-muted">
-          O Foundy continua gratuito para postar, encontrar, conversar após aprovação e denunciar abusos. A receita vem de empresas verificadas, pontos seguros, apoios voluntários e destaque opcional para alertas de perda.
+          Esta aba fica limpa de propósito: aqui aparece apenas o apoio voluntário. Empresa Verificada, Ponto Seguro e Alerta Ampliado aparecem nos lugares onde fazem sentido para cada usuário.
         </p>
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {lista.map((plan) => (
-          <article className="foundy-item-card rounded-3xl border border-foundy-border bg-foundy-surface p-5" key={plan.id}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-wide text-foundy-green">{plan.price}</p>
-                <h2 className="mt-2 text-2xl font-black">{plan.title}</h2>
-              </div>
-              <span className="grid size-12 place-items-center rounded-2xl bg-foundy-blue/15 text-foundy-blue">
-                {plan.id === 'support_foundy' ? <Star size={22} /> : plan.id === 'safe_point' ? <ShieldCheck size={22} /> : plan.id === 'loss_alert_boost' ? <Sparkles size={22} /> : <Building2 size={22} />}
-              </span>
-            </div>
-            <p className="mt-3 text-sm leading-6 text-foundy-muted">{plan.description}</p>
-            <ul className="mt-4 grid gap-2 text-sm">
-              {plan.benefits.map((benefit) => <li className="rounded-2xl border border-foundy-border bg-foundy-background p-3" key={benefit}>{benefit}</li>)}
-            </ul>
-            <p className="mt-4 rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-3 text-sm text-foundy-green">{plan.ethical_notice}</p>
-            <button className="mt-4 h-11 w-full rounded-xl bg-foundy-blue text-sm font-black text-white" type="button" onClick={() => onSolicitar(plan)}>
-              {plan.id === 'loss_alert_boost' && sessao ? 'Escolher em um alerta meu' : plan.cta}
-            </button>
-          </article>
-        ))}
-      </div>
+      <article className="foundy-item-card rounded-3xl border border-foundy-green/30 bg-foundy-surface p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-wide text-foundy-green">{plan.price}</p>
+            <h2 className="mt-2 text-3xl font-black">{plan.title}</h2>
+          </div>
+          <span className="grid size-14 place-items-center rounded-2xl bg-foundy-green/15 text-foundy-green">
+            <Star size={26} />
+          </span>
+        </div>
+        <p className="mt-4 max-w-3xl text-sm leading-6 text-foundy-muted">{plan.description}</p>
+        <ul className="mt-4 grid gap-2 text-sm md:grid-cols-3">
+          {plan.benefits.map((benefit) => <li className="rounded-2xl border border-foundy-border bg-foundy-background p-3" key={benefit}>{benefit}</li>)}
+        </ul>
+        <p className="mt-4 rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-3 text-sm text-foundy-green">{plan.ethical_notice}</p>
+        <button className="mt-4 h-11 w-full rounded-xl bg-foundy-green text-sm font-black text-slate-950 sm:w-auto sm:px-6" type="button" onClick={() => onSolicitar(plan)}>
+          {plan.cta}
+        </button>
+        <p className="mt-3 text-xs font-bold text-foundy-muted">{sessao ? `Apoio vinculado à conta de ${sessao.nome}.` : 'Você também pode apoiar sem estar logado, informando um e-mail de contato.'}</p>
+      </article>
       <div className="rounded-3xl border border-foundy-border bg-foundy-surface p-5">
         <h2 className="text-xl font-black">Regras éticas da monetização</h2>
         <p className="mt-2 text-sm leading-6 text-foundy-muted">
@@ -1632,19 +1837,35 @@ function EmpresasSection({
   catalogo,
   empresaSelecionada,
   mensagem,
+  planos,
+  sessao,
+  onCarregarPlanos,
   onBuscaChange,
   onSelecionarEmpresa,
   onVoltar,
+  onCriarEmpresa,
+  onSolicitarPlano,
 }: {
   empresas: EmpresaFoundy[]
   busca: string
   catalogo: EmpresaCatalogoItem[]
   empresaSelecionada: EmpresaFoundy | null
   mensagem: string
+  planos: MonetizationPlansResponse | null
+  sessao: FoundySession | null
+  onCarregarPlanos: () => void
   onBuscaChange: (value: string) => void
   onSelecionarEmpresa: (empresa: EmpresaFoundy) => void
   onVoltar: () => void
+  onCriarEmpresa: () => void
+  onSolicitarPlano: (plan: MonetizationPlan) => void
 }) {
+  useEffect(() => {
+    if (!planos) onCarregarPlanos()
+  }, [onCarregarPlanos, planos])
+
+  const companyPlans = getCompanyPlans(planos)
+
   if (empresaSelecionada) {
     return (
       <section className="grid gap-4">
@@ -1706,11 +1927,76 @@ function EmpresasSection({
         ))}
       </div>
       {empresas.length === 0 ? <EmptyState title="Nenhuma empresa encontrada" text="Quando uma instituição criar uma conta empresarial, ela aparecerá aqui." /> : null}
+      <CompanyPlansOffer
+        title="Leve o Foundy para sua instituição"
+        subtitle="A oferta de Empresa Verificada aparece aqui, onde o usuário já está procurando catálogos empresariais."
+        plans={companyPlans}
+        sessao={sessao}
+        onCriarEmpresa={onCriarEmpresa}
+        onSolicitarPlano={onSolicitarPlano}
+      />
     </section>
   )
 }
 
-function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; onMensagem: (value: string) => void }) {
+function CompanyPlansOffer({
+  title,
+  subtitle,
+  plans,
+  sessao,
+  onCriarEmpresa,
+  onSolicitarPlano,
+}: {
+  title: string
+  subtitle: string
+  plans: MonetizationPlan[]
+  sessao: FoundySession | null
+  onCriarEmpresa: () => void
+  onSolicitarPlano: (plan: MonetizationPlan) => void
+}) {
+  return (
+    <aside className="rounded-3xl border border-foundy-blue/30 bg-foundy-surface p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="foundy-eyebrow text-sm font-semibold text-foundy-blue">Foundy Empresas</p>
+          <h2 className="mt-1 text-2xl font-black">{title}</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-foundy-muted">{subtitle}</p>
+        </div>
+        {sessao?.tipo_conta === 'empresa' ? <span className="rounded-full bg-foundy-green/20 px-3 py-1 text-xs font-black text-foundy-green">Conta empresarial detectada</span> : null}
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {plans.map((plan) => (
+          <article className="rounded-3xl border border-foundy-border bg-foundy-background p-4" key={plan.id}>
+            <p className="text-xs font-black uppercase tracking-wide text-foundy-green">{plan.price}</p>
+            <h3 className="mt-2 text-lg font-black">{plan.title}</h3>
+            <p className="mt-2 min-h-16 text-sm leading-6 text-foundy-muted">{plan.description}</p>
+            <p className="mt-3 rounded-2xl border border-foundy-border bg-foundy-surface p-3 text-xs font-bold text-foundy-muted">
+              {plan.item_limit === null ? 'Itens ativos: sem limite fixo' : plan.item_limit ? `Itens ativos: até ${plan.item_limit}` : 'Entrada gratuita'}
+            </p>
+            <ul className="mt-3 grid gap-2 text-xs text-foundy-muted">
+              {plan.benefits.slice(0, 3).map((benefit) => <li key={benefit}>- {benefit}</li>)}
+            </ul>
+            <button className="mt-4 h-10 w-full rounded-xl bg-foundy-blue text-xs font-black text-white" type="button" onClick={() => (plan.id === 'company_free' ? onCriarEmpresa() : onSolicitarPlano(plan))}>{plan.cta}</button>
+          </article>
+        ))}
+      </div>
+    </aside>
+  )
+}
+
+function EmpresaPainelSection({
+  sessao,
+  planos,
+  onCarregarPlanos,
+  onMensagem,
+  onSolicitarPlano,
+}: {
+  sessao: FoundySession
+  planos: MonetizationPlansResponse | null
+  onCarregarPlanos: () => void
+  onMensagem: (value: string) => void
+  onSolicitarPlano: (plan: MonetizationPlan) => void
+}) {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [itens, setItens] = useState<EmpresaCatalogoItem[]>([])
   const [titulo, setTitulo] = useState('')
@@ -1735,6 +2021,7 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
   const [qrLink, setQrLink] = useState('')
   const [relatorio, setRelatorio] = useState<{ total_itens: number; total_retirados: number; total_disponiveis: number; taxa_retirada: number } | null>(null)
   const categoriaAtual = categoriaFromFiltro(categoriaCatalogo)
+  const companyPlans = getCompanyPlans(planos)
 
   const carregar = useCallback(async () => {
     const lista = await listarCatalogoEmpresa(sessao.usuario_id, '')
@@ -1906,6 +2193,14 @@ function EmpresaPainelSection({ sessao, onMensagem }: { sessao: FoundySession; o
           <button className="h-11 rounded-xl bg-foundy-green text-sm font-black text-slate-950" type="button" onClick={() => void salvarPerfilPublicoEmpresa()}>Salvar página pública</button>
         </div>
       </div>
+      <CompanyPlansOffer
+        title="Melhore seu catálogo empresarial"
+        subtitle="Escolha um plano de crescimento com recursos que já possuem base funcional no Foundy: limite de itens, selo, QR Code, relatório e implantação assistida."
+        plans={companyPlans}
+        sessao={sessao}
+        onCriarEmpresa={() => setMonetizacaoMensagem('Sua Empresa Básica já está ativa. Ela permite até 5 itens disponíveis no catálogo.')}
+        onSolicitarPlano={onSolicitarPlano}
+      />
       <div className="flex flex-col gap-3 rounded-3xl border border-foundy-border bg-foundy-surface p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl font-black">Meu catálogo</h2>
@@ -2051,6 +2346,7 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
   const [empresaCnpj, setEmpresaCnpj] = useState('')
   const [empresaCep, setEmpresaCep] = useState('')
   const [empresaCatalogoPublico, setEmpresaCatalogoPublico] = useState(true)
+  const [empresaPlanoInteresse, setEmpresaPlanoInteresse] = useState<'company_free' | 'company_verified' | 'company_pro' | 'event_plan'>('company_free')
   const [mensagem, setMensagem] = useState('Crie sua conta para publicar, conversar e receber alertas.')
   const [enviando, setEnviando] = useState(false)
 
@@ -2082,6 +2378,7 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
                 empresa_cnpj: empresaCnpj,
                 empresa_cep: empresaCep,
                 empresa_catalogo_publico: empresaCatalogoPublico,
+                company_plan_interest: empresaPlanoInteresse,
               }
             : {}),
         })
@@ -2114,6 +2411,23 @@ function ModalAutenticacao({ onSessaoAtiva, onClose }: { onSessaoAtiva: (sessao:
         {modo === 'cadastrar' && tipoConta === 'empresa' ? (
           <div className="grid gap-3 rounded-3xl border border-foundy-green/30 bg-foundy-green/10 p-4">
             <h3 className="font-black text-foundy-green">Dados públicos da instituição</h3>
+            <div className="grid gap-2">
+              <p className="text-sm font-black">Escolha o ponto de partida empresarial</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {companyPlanFallbacks.map((plan) => (
+                  <button
+                    className={`rounded-2xl border p-3 text-left text-sm ${empresaPlanoInteresse === plan.id ? 'border-foundy-green bg-foundy-green text-slate-950' : 'border-foundy-border bg-foundy-background text-foundy-muted'}`}
+                    key={plan.id}
+                    type="button"
+                    onClick={() => setEmpresaPlanoInteresse(plan.id as typeof empresaPlanoInteresse)}
+                  >
+                    <strong className="block">{plan.title}</strong>
+                    <span className="mt-1 block text-xs font-bold">{plan.price}</span>
+                    <span className="mt-2 block text-xs">{plan.id === 'company_free' ? 'Ativo após cadastro: até 5 itens.' : 'A conta nasce Básica e a solicitação paga vai para análise manual.'}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
             <Field label="Nome da empresa ou instituição"><input className="foundy-input" value={empresaNome} onChange={(event) => setEmpresaNome(event.target.value)} placeholder="Ex.: Faculdade Centro Norte" /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="CNPJ"><input className="foundy-input" value={empresaCnpj} onChange={(event) => setEmpresaCnpj(event.target.value)} placeholder="00.000.000/0000-00" /></Field>
@@ -2439,15 +2753,17 @@ function ModalItemAchado({ sessao, onClose, onPublicado }: { sessao: FoundySessi
   )
 }
 
-function ModalPerdiAlgo({ sessao, pontoInicial, onClose, onCriado }: { sessao: FoundySession; pontoInicial: GeoPoint; onClose: () => void; onCriado: (mensagem: string) => void }) {
+function ModalPerdiAlgo({ sessao, pontoInicial, onClose, onCriado }: { sessao: FoundySession; pontoInicial: GeoPoint; onClose: () => void; onCriado: (mensagem: string, alerta?: LostAlert, abrirBoost?: boolean) => void }) {
   const [titulo, setTitulo] = useState('')
   const [descricao, setDescricao] = useState('')
   const [subcategoria, setSubcategoria] = useState<ItemFilter>('outros')
   const [localDescricao, setLocalDescricao] = useState('')
   const [ponto, setPonto] = useState<GeoPoint>(pontoInicial)
   const [raio, setRaio] = useState(5000)
+  const [queroAmpliarDepois, setQueroAmpliarDepois] = useState(false)
   const [mensagem, setMensagem] = useState('Toque no mapa para posicionar o centro do perímetro.')
   const categoriaAtual = categoriaFromFiltro(subcategoria)
+  const boostPlan = lossAlertBoostPlanFallback
 
   async function criar() {
     if (!titulo.trim() || !descricao.trim()) return setMensagem('Preencha título e descrição.')
@@ -2464,7 +2780,26 @@ function ModalPerdiAlgo({ sessao, pontoInicial, onClose, onCriado }: { sessao: F
         longitude: ponto.longitude,
         raio_metros: raio,
       })
-      onCriado(resposta.mensagem)
+      const alertaCriado: LostAlert = {
+        id: resposta.alerta_id,
+        usuario_id: sessao.usuario_id,
+        titulo,
+        descricao,
+        categoria: categoriaAtual,
+        subcategoria,
+        local_descricao: localDescricao,
+        latitude_aproximada: ponto.latitude,
+        longitude_aproximada: ponto.longitude,
+        raio_metros: raio,
+        distancia_metros: 0,
+        imagem_url: null,
+        status: 'ativo',
+        criado_em: new Date().toISOString(),
+        boost_ativo: false,
+        boost_expira_em: null,
+        boost_tipo: null,
+      }
+      onCriado(resposta.mensagem, alertaCriado, queroAmpliarDepois)
     } catch (error) {
       setMensagem(error instanceof Error ? error.message : 'Não foi possível criar o alerta perdido.')
     }
@@ -2473,6 +2808,17 @@ function ModalPerdiAlgo({ sessao, pontoInicial, onClose, onCriado }: { sessao: F
   return (
     <ModalBase titulo="Perímetro ativo de perda" subtitulo="Receba notificação se surgir item compatível." onClose={onClose}>
       <div className="grid gap-4 p-4">
+        <div className="rounded-3xl border border-foundy-blue/30 bg-foundy-blue/10 p-4">
+          <p className="text-xs font-black uppercase tracking-wide text-foundy-blue">{boostPlan.title}</p>
+          <h3 className="mt-1 text-xl font-black">Quer aumentar o alcance depois de publicar?</h3>
+          <p className="mt-2 text-sm leading-6 text-foundy-muted">{boostPlan.description}</p>
+          <p className="mt-2 text-xs font-bold text-foundy-muted">{boostPlan.price}</p>
+          <label className="mt-3 flex gap-3 rounded-2xl border border-foundy-border bg-foundy-background p-3 text-sm">
+            <input checked={queroAmpliarDepois} onChange={(event) => setQueroAmpliarDepois(event.target.checked)} type="checkbox" />
+            Abrir a solicitação de Alerta Ampliado logo após criar este alerta.
+          </label>
+          <p className="mt-3 rounded-2xl border border-foundy-green/30 bg-foundy-green/10 p-3 text-xs text-foundy-green">{boostPlan.ethical_notice}</p>
+        </div>
         <Field label="Título"><input className="foundy-input" value={titulo} onChange={(event) => setTitulo(event.target.value)} placeholder="Ex.: Perdi meu celular preto" /></Field>
         <Field label="Descrição"><textarea className="foundy-input min-h-24" value={descricao} onChange={(event) => setDescricao(event.target.value)} /></Field>
         <Field label="Categoria do item perdido"><select className="foundy-input" value={subcategoria} onChange={(event) => setSubcategoria(event.target.value as ItemFilter)}>{Object.entries(filtrosFoundy).filter(([value]) => value !== 'todos').map(([value, data]) => <option key={value} value={value}>{data.label}</option>)}</select></Field>
@@ -3048,7 +3394,7 @@ function ModalAcaoRapida({ onClose, onEscolherPerdi, onEscolherAchei }: { onClos
   return (
     <ModalBase titulo="Nova ação rápida" subtitulo="Selecione o fluxo ideal." onClose={onClose}>
       <div className="grid gap-3 p-4">
-        <button className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-red-500 px-4 text-left text-white" type="button" onClick={onEscolherPerdi}><span><strong className="block">Perdi algo</strong><span className="text-sm opacity-90">Criar alerta com perímetro</span></span><MapPin size={18} /></button>
+        <button className="foundy-pressable inline-flex min-h-16 items-center justify-between rounded-2xl bg-red-500 px-4 py-3 text-left text-white" type="button" onClick={onEscolherPerdi}><span><strong className="block">Perdi algo</strong><span className="text-sm opacity-90">Criar alerta com perímetro e opção de Alerta Ampliado</span></span><MapPin size={18} /></button>
         <button className="foundy-pressable inline-flex h-14 items-center justify-between rounded-2xl bg-foundy-green px-4 text-left text-slate-950" type="button" onClick={onEscolherAchei}><span><strong className="block">Achei algo</strong><span className="text-sm opacity-90">Publicar com desafio do dono</span></span><CheckCircle2 size={18} /></button>
       </div>
     </ModalBase>

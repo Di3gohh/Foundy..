@@ -99,17 +99,18 @@ export default function MonetizacaoPage() {
     }
   }
 
-  const list = plans?.plans ?? []
+  const supportPlan = plans?.support_plan ?? plans?.plans.find((plan) => plan.id === 'support_foundy') ?? null
+  const list = supportPlan ? [supportPlan] : []
 
   return (
     <main className="foundy-app-shell min-h-dvh bg-foundy-background px-4 py-6 text-foundy-foreground sm:px-6 lg:px-8">
       <section className="mx-auto grid max-w-7xl gap-6">
         <div className="foundy-hero-panel rounded-3xl border border-foundy-border bg-foundy-surface p-6">
           <Link className="text-sm font-black text-foundy-green underline-offset-4 hover:underline" href="/">Voltar ao Foundy</Link>
-          <p className="foundy-eyebrow foundy-attention mt-6 text-sm font-semibold text-foundy-green">Monetização responsável</p>
-          <h1 className="mt-2 text-4xl font-black">O Foundy continua gratuito para quem quer encontrar ou devolver itens.</h1>
+          <p className="foundy-eyebrow foundy-attention mt-6 text-sm font-semibold text-foundy-green">Apoio voluntário</p>
+          <h1 className="mt-2 text-4xl font-black">Apoie o Foundy sem criar paywall para recuperar itens.</h1>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-foundy-muted">
-            Planos pagos ajudam a manter servidores, segurança, moderação e melhorias da plataforma. Nenhum pagamento garante recuperação, prioridade absoluta ou acesso a dados pessoais.
+            Esta página mostra somente o Apoie Foundy. Empresa Verificada, Ponto Seguro e Alerta Ampliado aparecem dentro dos fluxos corretos do site, no contexto de empresas, mapa e alertas de perda.
           </p>
         </div>
 

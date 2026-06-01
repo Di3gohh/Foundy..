@@ -165,6 +165,33 @@ export type EmpresaCatalogoItem = {
   atualizado_em?: string
 }
 
+export type CompanyMember = {
+  id: string
+  company_id: string
+  user_id?: string | null
+  role: 'owner' | 'manager' | 'staff'
+  status: 'active' | 'invited' | 'removed'
+  invited_email?: string | null
+  created_at: string
+  updated_at?: string
+}
+
+export type CompanyEventPlan = {
+  id: string
+  company_id: string
+  title: string
+  slug?: string | null
+  description?: string | null
+  location_name?: string | null
+  address?: string | null
+  starts_at?: string | null
+  ends_at?: string | null
+  status: 'draft' | 'active' | 'finished' | 'cancelled'
+  plan_status: 'pending_payment' | 'active' | 'expired' | 'cancelled'
+  created_at: string
+  updated_at?: string
+}
+
 export type UserDashboard = {
   usuario: FoundySession
   itens_postados: ItemAchado[]
@@ -190,9 +217,12 @@ export type MensagemChat = {
 
 export type MonetizationPlan = {
   id: string
+  category?: 'support' | 'company' | 'safe_point' | 'loss_alert'
+  plan_type?: 'free' | 'verified' | 'pro' | 'event'
   title: string
   price: string
   amount_cents: number
+  item_limit?: number | null
   description: string
   benefits: string[]
   ethical_notice: string
@@ -204,6 +234,10 @@ export type MonetizationPlansResponse = {
   subtitulo: string
   support_email: string
   plans: MonetizationPlan[]
+  support_plan?: MonetizationPlan
+  safe_point_plan?: MonetizationPlan
+  loss_alert_boost_plan?: MonetizationPlan
+  company_plans?: MonetizationPlan[]
 }
 
 export type ManualPaymentInfo = {
@@ -580,6 +614,7 @@ export async function cadastrarUsuario(payload: {
   empresa_catalogo_publico?: boolean
   empresa_cnpj?: string
   empresa_cep?: string
+  company_plan_interest?: 'company_free' | 'company_verified' | 'company_pro' | 'event_plan'
 }) {
   return requestJson<{ mensagem: string; email_verificado?: boolean; login_liberado?: boolean }>(
     '/usuarios/cadastrar',
@@ -1068,6 +1103,57 @@ export async function buscarQrCodeEmpresa(empresaId: string, usuarioId: string) 
     `/companies/${empresaId}/qr-code?${query.toString()}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
     'Não foi possível gerar o QR Code da empresa.',
+  )
+}
+
+export async function listarMembrosEmpresa(empresaId: string, usuarioId: string) {
+  const query = new URLSearchParams({ usuario_id: usuarioId })
+  return requestJson<CompanyMember[]>(
+    `/companies/${empresaId}/members?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar a equipe empresarial.',
+  )
+}
+
+export async function convidarMembroEmpresa(empresaId: string, usuarioId: string, invitedEmail: string, role: 'manager' | 'staff') {
+  return requestJson<CompanyMember & { mensagem?: string }>(
+    `/companies/${empresaId}/members`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ usuario_id: usuarioId, invited_email: invitedEmail, role }),
+    },
+    'Não foi possível convidar o membro da equipe.',
+  )
+}
+
+export async function listarEventosEmpresa(empresaId: string, usuarioId: string) {
+  const query = new URLSearchParams({ usuario_id: usuarioId })
+  return requestJson<CompanyEventPlan[]>(
+    `/companies/${empresaId}/events?${query.toString()}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+    'Não foi possível carregar os eventos empresariais.',
+  )
+}
+
+export async function criarEventoEmpresa(empresaId: string, payload: {
+  usuario_id: string
+  title: string
+  slug?: string | null
+  description?: string | null
+  location_name?: string | null
+  address?: string | null
+  starts_at?: string | null
+  ends_at?: string | null
+}) {
+  return requestJson<CompanyEventPlan & { mensagem?: string }>(
+    `/companies/${empresaId}/events`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    'Não foi possível criar o evento empresarial.',
   )
 }
 

@@ -46,6 +46,12 @@ Pastas principais:
 23. Página de segurança e termos.
 24. Rodapé com contato oficial.
 25. Headers de segurança no Next.js.
+26. Monetização contextual: Apoiar mostra apenas apoio voluntário.
+27. Oferta de Empresa Verificada no cadastro empresarial, aba Empresas e Meu catálogo.
+28. Oferta de Ponto Seguro abaixo do mapa.
+29. Oferta de Alerta Ampliado no feed e no fluxo de perda.
+30. Limite real de 5 itens ativos para Empresa Básica.
+31. Endpoints de equipe e eventos protegidos por plano empresarial ativo.
 
 ## 4. Moderação e IA de segurança
 
@@ -116,10 +122,11 @@ Antes do lançamento público, revisar advisors de segurança e performance no S
 
 Empresas:
 
-1. Plano gratuito limitado para validar mercado.
-2. Plano mensal para catálogos públicos e internos.
-3. Plano premium com múltiplos operadores, relatórios e SLA.
-4. Oferta inicial para escolas, universidades, shoppings, academias e eventos.
+1. Empresa Básica gratuita: página pública, catálogo público ou interno e até 5 itens ativos.
+2. Empresa Verificada por R$ 49,90/mês: CNPJ analisado, selo, QR Code, catálogo completo e destaque na aba Empresas.
+3. Empresa Pro por R$ 99,90 a R$ 149,90/mês: catálogo sem limite fixo, relatórios, histórico e implantação assistida de equipe.
+4. Eventos e Instituições por R$ 199 a R$ 499 por evento/mês: página temporária, QR Code do evento, painel de atendimento e relatório final.
+5. Ponto Seguro Foundy como oferta separada para locais parceiros de retirada pública.
 
 Anúncios:
 

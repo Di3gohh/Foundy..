@@ -87,6 +87,29 @@ class CompanyPublicProfileUpdate(BaseModel):
     custom_logo_url: str | None = Field(default=None, max_length=5_000_000)
 
 
+class CompanyMemberCreate(BaseModel):
+    usuario_id: UUID
+    invited_email: EmailStr
+    role: Literal["manager", "staff"] = "staff"
+
+
+class CompanyMemberUpdate(BaseModel):
+    usuario_id: UUID
+    status: Literal["active", "invited", "removed"]
+    role: Literal["owner", "manager", "staff"] | None = None
+
+
+class CompanyEventCreate(BaseModel):
+    usuario_id: UUID
+    title: str = Field(min_length=3, max_length=160)
+    slug: str | None = Field(default=None, max_length=80)
+    description: str | None = Field(default=None, max_length=1000)
+    location_name: str | None = Field(default=None, max_length=160)
+    address: str | None = Field(default=None, max_length=220)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
 def _slugify(value: str) -> str:
     text = value.strip().lower()
     text = re.sub(r"[^a-z0-9]+", "-", text)
@@ -115,7 +138,7 @@ async def _ensure_user(usuario_id: UUID) -> dict:
     response = await (
         get_supabase()
         .table("usuarios")
-        .select("id,nome,email,tipo_conta,empresa_nome,email_verificado_em,removido_em")
+        .select("id,nome,email,tipo_conta,empresa_nome,email_verificado_em,removido_em,plan_type,plan_status")
         .eq("id", str(usuario_id))
         .is_("removido_em", "null")
         .limit(1)
@@ -133,6 +156,11 @@ async def _ensure_company_owner(company_id: UUID, usuario_id: UUID) -> dict:
     if company.get("tipo_conta") != "empresa":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Esta ação é exclusiva para contas empresariais.")
     return company
+
+
+def _ensure_company_plan(company: dict, allowed: set[str], message: str) -> None:
+    if company.get("plan_status") != "active" or company.get("plan_type") not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=message)
 
 
 async def _notify(usuario_id: str | None, titulo: str, mensagem: str, *, alerta_id: str | None = None) -> None:
@@ -592,6 +620,117 @@ async def get_company_qr_code(company_id: UUID, usuario_id: UUID = Query(...)) -
         "qr_content": url,
         "print_text": "Encontrou ou perdeu algo aqui? Acesse o Foundy.",
     }
+
+
+@router.get("/companies/{company_id}/members")
+async def list_company_members(company_id: UUID, usuario_id: UUID = Query(...)) -> list[dict]:
+    company = await _ensure_company_owner(company_id, usuario_id)
+    _ensure_company_plan(company, {"pro"}, "Equipe com múltiplos funcionários exige Empresa Pro ativa.")
+    response = await (
+        get_supabase()
+        .table("company_members")
+        .select("*")
+        .eq("company_id", str(company_id))
+        .order("created_at", desc=True)
+        .limit(100)
+        .execute()
+    )
+    return response.data
+
+
+@router.post("/companies/{company_id}/members", status_code=status.HTTP_201_CREATED)
+async def create_company_member(company_id: UUID, payload: CompanyMemberCreate, background_tasks: BackgroundTasks) -> dict:
+    company = await _ensure_company_owner(company_id, payload.usuario_id)
+    _ensure_company_plan(company, {"pro"}, "Convites de equipe são liberados para Empresa Pro ativa.")
+    response = await (
+        get_supabase()
+        .table("company_members")
+        .insert(
+            {
+                "company_id": str(company_id),
+                "invited_email": str(payload.invited_email).lower(),
+                "role": payload.role,
+                "status": "invited",
+            }
+        )
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível criar o convite da equipe.")
+    background_tasks.add_task(
+        send_support_email,
+        "Novo convite de equipe Foundy Empresas",
+        f"Empresa: {company.get('empresa_nome') or company.get('nome')}\nE-mail convidado: {payload.invited_email}\nFunção: {payload.role}",
+    )
+    return {**response.data[0], "mensagem": "Convite de equipe registrado para implantação assistida."}
+
+
+@router.patch("/companies/{company_id}/members/{member_id}")
+async def update_company_member(company_id: UUID, member_id: UUID, payload: CompanyMemberUpdate) -> dict:
+    company = await _ensure_company_owner(company_id, payload.usuario_id)
+    _ensure_company_plan(company, {"pro"}, "Gestão de equipe exige Empresa Pro ativa.")
+    updates = {"status": payload.status, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if payload.role:
+        updates["role"] = payload.role
+    await (
+        get_supabase()
+        .table("company_members")
+        .update(updates)
+        .eq("id", str(member_id))
+        .eq("company_id", str(company_id))
+        .execute()
+    )
+    return {"mensagem": "Membro da equipe atualizado."}
+
+
+@router.get("/companies/{company_id}/events")
+async def list_company_events(company_id: UUID, usuario_id: UUID = Query(...)) -> list[dict]:
+    company = await _ensure_company_owner(company_id, usuario_id)
+    _ensure_company_plan(company, {"event"}, "Eventos exigem plano Eventos e Instituições ativo.")
+    response = await (
+        get_supabase()
+        .table("event_plans")
+        .select("*")
+        .eq("company_id", str(company_id))
+        .order("starts_at", desc=True)
+        .limit(80)
+        .execute()
+    )
+    return response.data
+
+
+@router.post("/companies/{company_id}/events", status_code=status.HTTP_201_CREATED)
+async def create_company_event(company_id: UUID, payload: CompanyEventCreate, background_tasks: BackgroundTasks) -> dict:
+    company = await _ensure_company_owner(company_id, payload.usuario_id)
+    _ensure_company_plan(company, {"event"}, "Criação de evento exige plano Eventos e Instituições ativo.")
+    slug = _slugify(payload.slug or payload.title)
+    response = await (
+        get_supabase()
+        .table("event_plans")
+        .insert(
+            {
+                "company_id": str(company_id),
+                "title": payload.title.strip(),
+                "slug": slug,
+                "description": payload.description.strip() if payload.description else None,
+                "location_name": payload.location_name.strip() if payload.location_name else None,
+                "address": payload.address.strip() if payload.address else None,
+                "starts_at": payload.starts_at.isoformat() if payload.starts_at else None,
+                "ends_at": payload.ends_at.isoformat() if payload.ends_at else None,
+                "status": "draft",
+                "plan_status": "active",
+            }
+        )
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível criar o evento.")
+    background_tasks.add_task(
+        send_support_email,
+        "Novo evento Foundy Empresas",
+        f"Empresa: {company.get('empresa_nome') or company.get('nome')}\nEvento: {payload.title}\nSlug: {slug}",
+    )
+    return {**response.data[0], "mensagem": "Evento criado em rascunho para operação assistida."}
 
 
 @router.get("/companies/{slug}")
