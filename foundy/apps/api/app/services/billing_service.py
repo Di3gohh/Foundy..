@@ -277,7 +277,12 @@ async def payment_instructions(
                     raise PaymentGatewayError("Assinaturas exigem e-mail do pagador.")
                 return await create_mercado_pago_subscription(amount_cents, reference, title, description, payer_email, token)
             return await create_mercado_pago_preference(amount_cents, reference, title, description, payer_email, token)
-        except PaymentGatewayError:
+        except PaymentGatewayError as exc:
+            if recurring:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Não foi possível gerar a assinatura automática no Mercado Pago: {exc}",
+                ) from exc
             # Mantém o usuário destravado caso o provedor esteja temporariamente indisponível.
             pass
     return manual_payment_instructions(amount_cents, reference)
@@ -298,7 +303,10 @@ async def _mercado_pago_json_request(path: str, payload: dict[str, object] | Non
     )
     try:
         raw = await asyncio.to_thread(lambda: urllib.request.urlopen(request, timeout=18).read())
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+    except urllib.error.HTTPError as exc:
+        raw_error = exc.read().decode("utf-8", errors="replace")[:600]
+        raise PaymentGatewayError(f"Mercado Pago respondeu HTTP {exc.code}. {raw_error}") from exc
+    except urllib.error.URLError as exc:
         raise PaymentGatewayError("Não foi possível falar com o Mercado Pago.") from exc
     return json.loads(raw.decode("utf-8"))
 
