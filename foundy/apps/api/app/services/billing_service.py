@@ -388,7 +388,7 @@ async def create_mercado_pago_subscription(
         payload["metadata"] = {"description": description[:500]}
 
     response = await _mercado_pago_json_request("/preapproval", payload, token=token)
-    checkout_url = response.get("init_point")
+    checkout_url = response.get("init_point") or response.get("sandbox_init_point")
     if not checkout_url:
         raise PaymentGatewayError("Mercado Pago não retornou link de assinatura.")
     return {
