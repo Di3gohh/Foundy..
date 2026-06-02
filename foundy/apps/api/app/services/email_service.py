@@ -69,6 +69,8 @@ async def _send_resend_email(to_email: str, subject: str, body: str) -> bool:
         headers={
             "Authorization": f"Bearer {settings.resend_api_key}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Foundy/1.0 (+https://www.foundyapp.com.br)",
         },
     )
     try:
