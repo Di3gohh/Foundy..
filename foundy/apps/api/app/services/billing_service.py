@@ -379,6 +379,7 @@ async def create_mercado_pago_subscription(
     token: str | None = None,
 ) -> dict:
     app_base = settings.app_public_url.rstrip("/")
+    end_date = datetime.now(timezone.utc) + timedelta(days=365 * 5)
     payload: dict[str, object] = {
         "reason": title[:255],
         "external_reference": reference,
@@ -386,14 +387,13 @@ async def create_mercado_pago_subscription(
         "auto_recurring": {
             "frequency": 1,
             "frequency_type": "months",
+            "end_date": end_date.isoformat().replace("+00:00", "Z"),
             "transaction_amount": round(amount_cents / 100, 2),
             "currency_id": "BRL",
         },
         "back_url": f"{app_base}/monetizacao?assinatura=retorno&referencia={reference}",
         "status": "pending",
     }
-    if description:
-        payload["metadata"] = {"description": description[:500]}
 
     response = await _mercado_pago_json_request("/preapproval", payload, token=token)
     checkout_url = response.get("init_point") or response.get("sandbox_init_point")
