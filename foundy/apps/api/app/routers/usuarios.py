@@ -301,6 +301,19 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
         )
         novo_usuario_id = novo_usuario.data[0]["id"] if novo_usuario.data else None
 
+    if email_configurado and token:
+        email_enviado = await send_verification_email(email_normalizado, token)
+        if not email_enviado:
+            if novo_usuario_id:
+                await supabase.table("usuarios").delete().eq("id", novo_usuario_id).execute()
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "Não foi possível enviar o e-mail de confirmação agora. "
+                    "Verifique a configuração do Resend e tente criar a conta novamente."
+                ),
+            )
+
     plano_empresa = payload.company_plan_interest if payload.tipo_conta == "empresa" else "company_free"
     if payload.tipo_conta == "empresa" and plano_empresa != "company_free" and novo_usuario_id:
         reference = manual_reference("PLAN")
@@ -343,7 +356,6 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
         )
 
     if email_configurado and token:
-        background_tasks.add_task(send_verification_email, email_normalizado, token)
         return {
             "mensagem": "Cadastro criado. Enviamos um e-mail de confirmação.",
             "email_verificado": False,
