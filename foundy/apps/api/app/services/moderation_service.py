@@ -174,9 +174,6 @@ async def aplicar_moderacao_progressiva(
         f"Trecho: {(trecho or '')[:500]}\n\n"
         f"Suporte configurado: {settings.support_email}"
     )
-    if background_tasks:
-        background_tasks.add_task(send_support_email, f"Moderacao automatica Foundy: {titulo}", email_body)
-    else:
-        await send_support_email(f"Moderacao automatica Foundy: {titulo}", email_body)
+    await send_support_email(f"Moderacao automatica Foundy: {titulo}", email_body)
 
     return {"ocorrencia": ocorrencia, "acao": acao, "titulo": titulo, "motivo": motivo_principal}

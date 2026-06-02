@@ -339,8 +339,7 @@ async def cadastrar_usuario(payload: UsuarioCadastro, background_tasks: Backgrou
         )
 
     if payload.tipo_conta == "empresa":
-        background_tasks.add_task(
-            send_support_email,
+        await send_support_email(
             "Nova solicitação de conta empresarial Foundy",
             (
                 "Uma empresa solicitou conta no Foundy.\n\n"

@@ -421,8 +421,7 @@ async def cadastrar_item_achado(payload: ItemAchadoCreate, background_tasks: Bac
             trecho=f"{titulo}\n{descricao}",
             background_tasks=background_tasks,
         )
-        background_tasks.add_task(
-            send_support_email,
+        await send_support_email(
             "Publicação bloqueada pela moderação Foundy",
             (
                 "Uma publicação foi bloqueada automaticamente.\n\n"
@@ -775,8 +774,7 @@ async def enviar_mensagem_chat(
             .execute()
         )
         if destinatario_email.data and destinatario_email.data[0].get("aceita_notificacoes_email"):
-            background_tasks.add_task(
-                send_notification_email,
+            await send_notification_email(
                 destinatario_email.data[0]["email"],
                 "Nova mensagem no Foundy",
                 "Você recebeu uma nova mensagem no chat seguro do Foundy. Acesse sua conta para responder.",
@@ -897,8 +895,7 @@ async def denunciar_extorsao(
             )
             .execute()
         )
-    background_tasks.add_task(
-        send_support_email,
+    await send_support_email(
         "Denúncia de extorsão no Foundy",
         (
             "Uma denúncia de extorsão foi registrada no Foundy.\n\n"
@@ -985,8 +982,7 @@ async def denunciar_post(payload: DenunciaPostCreate, background_tasks: Backgrou
         )
         .execute()
     )
-    background_tasks.add_task(
-        send_support_email,
+    await send_support_email(
         "Denúncia de post no Foundy",
         (
             "Uma denúncia de post foi registrada no Foundy.\n\n"

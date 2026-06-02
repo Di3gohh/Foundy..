@@ -297,8 +297,7 @@ async def abrir_chat_alerta_perdido(alerta_id: UUID, payload: EncontreiAlertaPer
     )
     dono = await supabase.table("usuarios").select("email,aceita_notificacoes_email").eq("id", dono_id).limit(1).execute()
     if dono.data and dono.data[0].get("aceita_notificacoes_email"):
-        background_tasks.add_task(
-            send_notification_email,
+        await send_notification_email(
             dono.data[0]["email"],
             "Alguém encontrou algo parecido no Foundy",
             f"Uma pessoa abriu um chat sobre seu alerta '{alerta.data[0]['titulo']}'. Acesse o Foundy para conversar com segurança.",

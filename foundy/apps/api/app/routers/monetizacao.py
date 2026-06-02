@@ -576,8 +576,7 @@ async def create_monetization_request(payload: MonetizationRequestCreate, backgr
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível registrar a solicitação.")
 
     row = response.data[0]
-    background_tasks.add_task(
-        send_support_email,
+    await send_support_email(
         "Nova solicitação de monetização Foundy",
         (
             f"Tipo: {payload.request_type}\n"
@@ -705,8 +704,7 @@ async def create_support_contribution(payload: SupportContributionCreate, backgr
     if not response.data:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível registrar o apoio.")
     row = response.data[0]
-    background_tasks.add_task(
-        send_support_email,
+    await send_support_email(
         "Nova intenção de apoio ao Foundy",
         f"Valor em centavos: {payload.amount_cents}\nPagador: {payload.payer_name or 'não informado'}\nE-mail: {payload.payer_email or 'não informado'}\nReferência: {reference}",
     )
@@ -826,8 +824,7 @@ async def create_loss_alert_boost(alert_id: UUID, payload: LossAlertBoostCreate,
     )
     if not created.data:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível solicitar o Alerta Ampliado.")
-    background_tasks.add_task(
-        send_support_email,
+    await send_support_email(
         "Novo Alerta Ampliado solicitado",
         f"Alerta: {alert_row.get('titulo')}\nUsuário: {payload.user_id}\nPlano: {payload.boost_type}\nReferência: {reference}",
     )
@@ -1067,8 +1064,7 @@ async def create_company_member(company_id: UUID, payload: CompanyMemberCreate, 
     )
     if not response.data:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível criar o convite da equipe.")
-    background_tasks.add_task(
-        send_support_email,
+    await send_support_email(
         "Novo convite de equipe Foundy Empresas",
         f"Empresa: {company.get('empresa_nome') or company.get('nome')}\nE-mail convidado: {payload.invited_email}\nFunção: {payload.role}",
     )
@@ -1135,8 +1131,7 @@ async def create_company_event(company_id: UUID, payload: CompanyEventCreate, ba
     )
     if not response.data:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível criar o evento.")
-    background_tasks.add_task(
-        send_support_email,
+    await send_support_email(
         "Novo evento Foundy Empresas",
         f"Empresa: {company.get('empresa_nome') or company.get('nome')}\nEvento: {payload.title}\nSlug: {slug}",
     )
